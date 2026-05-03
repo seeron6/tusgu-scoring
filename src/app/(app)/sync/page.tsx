@@ -1,14 +1,17 @@
 "use client";
 import * as React from "react";
 import {
-  Download, FileSpreadsheet, FileText, Database,
+  Download, FileSpreadsheet, FileText, Database, AlertTriangle, Trash2,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Modal } from "@/components/ui/modal";
 import { Card, CardHeader, PageHeader } from "@/components/sidebar";
 import { ProtectedPage } from "@/lib/auth-gate";
 import {
   listQuestionTypes, listScores, listStudents, listTrophyAllocations, listTrophyTypes,
+  wipeEverything, wipeScores, wipeStudents, wipeTrophyAllocations,
 } from "@/lib/data";
 import { buildLeaderboard } from "@/lib/ranking";
 import {
@@ -157,8 +160,175 @@ function SyncInner() {
             </p>
           </div>
         </Card>
+
+        <ResetCard />
       </div>
     </div>
+  );
+}
+
+type ResetMode = "scores" | "students" | "allocations" | "everything" | "cache";
+
+function ResetCard() {
+  const [mode, setMode] = React.useState<ResetMode | null>(null);
+
+  const variants: Record<ResetMode, { title: string; description: string; warning: string; phrase: string }> = {
+    scores: {
+      title: "Clear all scores",
+      description: "Remove every recorded score. Students, categories, question types, and trophies stay.",
+      warning: "All score entries across every category will be permanently deleted.",
+      phrase: "DELETE SCORES",
+    },
+    students: {
+      title: "Clear students + scores",
+      description: "Remove every student. Their scores cascade away too. Use this before importing a fresh master list.",
+      warning: "All students and all of their scores will be permanently deleted.",
+      phrase: "DELETE STUDENTS",
+    },
+    allocations: {
+      title: "Clear trophy allocations",
+      description: "Reset per-category trophy quantities to zero. Trophy types themselves are kept.",
+      warning: "Every per-category quantity will be removed; you'll need to re-allocate before previewing winners again.",
+      phrase: "RESET ALLOCATIONS",
+    },
+    everything: {
+      title: "Clear everything",
+      description: "Wipe students, scores, and trophy allocations. Keeps question types and trophy types so you can immediately re-import a new roster.",
+      warning: "Students, scores, and trophy allocations will all be permanently deleted.",
+      phrase: "WIPE EVERYTHING",
+    },
+    cache: {
+      title: "Clear local cache",
+      description: "Sign out of the protected pages on this device by clearing the unlock state. Doesn't touch the database.",
+      warning: "You'll need to enter the password again to access Scores / Leaderboard / Awards / Setup / Sync on this browser.",
+      phrase: "CLEAR CACHE",
+    },
+  };
+
+  const rows: { mode: ResetMode; subtle?: boolean }[] = [
+    { mode: "scores" },
+    { mode: "students" },
+    { mode: "allocations" },
+    { mode: "everything" },
+    { mode: "cache", subtle: true },
+  ];
+
+  return (
+    <Card padded={false} className="md:col-span-2 border-[#F0DEB8]">
+      <CardHeader title="Reset" icon={AlertTriangle} />
+      <div className="p-5 space-y-3">
+        <div className="text-[12px] text-[#B8651A] bg-[#FAF1E5] border border-[#F0DEB8] rounded p-3 leading-relaxed">
+          These actions are <strong>permanent</strong> on the live database and affect everyone using
+          the app. Each one asks for a typed confirmation before running.
+        </div>
+        {rows.map(({ mode: m, subtle }) => (
+          <div key={m} className="flex items-start gap-3 py-2 border-b border-[#F0EDE5] last:border-b-0">
+            <div className="flex-1 min-w-0">
+              <div className="text-[13.5px] font-medium text-[#1F1E1B]">{variants[m].title}</div>
+              <div className="text-[11.5px] text-[#7A7770]">{variants[m].description}</div>
+            </div>
+            <Button
+              variant={subtle ? "outline" : "danger"}
+              size="sm"
+              onClick={() => setMode(m)}
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Reset</span>
+            </Button>
+          </div>
+        ))}
+      </div>
+      {mode && (
+        <ConfirmWipeModal
+          mode={mode}
+          variant={variants[mode]}
+          onClose={() => setMode(null)}
+        />
+      )}
+    </Card>
+  );
+}
+
+function ConfirmWipeModal({
+  mode, variant, onClose,
+}: {
+  mode: ResetMode;
+  variant: { title: string; warning: string; phrase: string };
+  onClose: () => void;
+}) {
+  const [phrase, setPhrase] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+
+  async function run() {
+    setBusy(true);
+    try {
+      if (mode === "cache") {
+        sessionStorage.clear();
+        localStorage.removeItem("tusgu.unlocked");
+        toast.success("Local cache cleared. Reloading…");
+        setTimeout(() => window.location.reload(), 600);
+        return;
+      }
+      if (mode === "scores") {
+        const n = await wipeScores();
+        toast.success(`Deleted ${n} score${n === 1 ? "" : "s"}`);
+      } else if (mode === "students") {
+        const n = await wipeStudents();
+        toast.success(`Deleted ${n} student${n === 1 ? "" : "s"} (and their scores)`);
+      } else if (mode === "allocations") {
+        const n = await wipeTrophyAllocations();
+        toast.success(`Deleted ${n} allocation${n === 1 ? "" : "s"}`);
+      } else if (mode === "everything") {
+        const r = await wipeEverything();
+        toast.success(`Deleted ${r.students} students and ${r.allocations} allocations`);
+      }
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Reset failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      open
+      onClose={() => !busy && onClose()}
+      title={variant.title}
+      width="max-w-md"
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button
+            variant="danger"
+            disabled={busy || phrase.trim().toUpperCase() !== variant.phrase}
+            onClick={run}
+          >
+            {busy ? "Working…" : "Confirm"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <div className="text-[13px] text-[#1F1E1B] bg-[#FAEEE9] border border-[#F0CABE] rounded p-3 leading-relaxed">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 mt-0.5 text-[#B8341A] shrink-0" />
+            <div>{variant.warning}</div>
+          </div>
+        </div>
+        <div>
+          <div className="text-[12px] text-[#4A4843] mb-1.5">
+            Type <code className="bg-white px-1 rounded border border-[#E8E3D7] font-mono text-[12px]">{variant.phrase}</code> to confirm:
+          </div>
+          <Input
+            value={phrase}
+            onChange={(e) => setPhrase(e.target.value)}
+            placeholder={variant.phrase}
+            autoFocus
+          />
+        </div>
+      </div>
+    </Modal>
   );
 }
 

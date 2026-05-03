@@ -71,7 +71,8 @@
       "Bash(curl -sS -L \"https://seeron6.github.io/tusgu-scoring/students/\")",
       "Bash(curl -sSI -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"https://seeron6.github.io/tusgu-scoring/\")",
       "Bash(curl -sSI -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"https://seeron6.github.io/tusgu-scoring/students/\")",
-      "Bash(curl -sSI -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"https://seeron6.github.io/tusgu-scoring/scores/\")"
+      "Bash(curl -sSI -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"https://seeron6.github.io/tusgu-scoring/scores/\")",
+      "Bash(curl -sSI -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"https://seeron6.github.io/tusgu-scoring/brand-logo.jpeg\")"
     ]
   }
 }

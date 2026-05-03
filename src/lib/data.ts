@@ -263,3 +263,44 @@ export async function upsertTrophyAllocation(
     );
   if (error) throw error;
 }
+
+// =============================================================
+// Bulk wipe helpers — used by the Sync → Reset section
+// =============================================================
+
+/** Delete every student. Scores cascade via FK ON DELETE CASCADE. */
+export async function wipeStudents(): Promise<number> {
+  const { error, count } = await supabase()
+    .from("students")
+    .delete({ count: "exact" })
+    .gte("id", 0);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+/** Delete every score row but keep the students. */
+export async function wipeScores(): Promise<number> {
+  const { error, count } = await supabase()
+    .from("scores")
+    .delete({ count: "exact" })
+    .gte("id", 0);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+/** Delete every trophy allocation. Trophy types themselves are kept. */
+export async function wipeTrophyAllocations(): Promise<number> {
+  const { error, count } = await supabase()
+    .from("trophy_allocations")
+    .delete({ count: "exact" })
+    .gte("id", 0);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+/** Wipe students (cascades to scores) AND trophy allocations. Keeps question types and trophy types. */
+export async function wipeEverything(): Promise<{ students: number; allocations: number }> {
+  const allocations = await wipeTrophyAllocations();
+  const students = await wipeStudents();
+  return { students, allocations };
+}
