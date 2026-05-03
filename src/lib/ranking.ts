@@ -35,10 +35,12 @@ export function buildLeaderboard({
     m[s.question_type_id] = s.value;
   }
 
-  const maxPossible = questionTypes.reduce(
-    (sum, qt) => sum + qt.points_per_question * qt.max_questions,
-    0
-  );
+  const pointsByQt: Record<number, number> = {};
+  let maxPossible = 0;
+  for (const qt of questionTypes) {
+    pointsByQt[qt.id] = qt.points_per_question;
+    maxPossible += qt.points_per_question * qt.max_questions;
+  }
 
   const grouped = new Map<string, Student[]>();
   for (const s of students) {
@@ -48,7 +50,7 @@ export function buildLeaderboard({
   }
 
   const trophyAssignments = applyTrophies
-    ? assignTrophies(grouped, scoresByStudent, trophyTypes, trophyAllocations)
+    ? assignTrophies(grouped, scoresByStudent, trophyTypes, trophyAllocations, pointsByQt)
     : new Map<number, TrophyType>();
 
   const rows: LeaderboardRow[] = [];
@@ -56,10 +58,10 @@ export function buildLeaderboard({
 
   for (const cat of categoryKeys) {
     const list = grouped.get(cat)!;
-    const sorted = sortByCanonicalRank(list, scoresByStudent);
+    const sorted = sortByCanonicalRank(list, scoresByStudent, pointsByQt);
     sorted.forEach((student, i) => {
       const sm = scoresByStudent.get(student.id) ?? {};
-      const totalScore = sumScores(sm);
+      const totalScore = totalPoints(sm, pointsByQt);
       rows.push({
         rank: i + 1,
         student,
@@ -75,23 +77,33 @@ export function buildLeaderboard({
   return rows;
 }
 
-export function sumScores(scores: Record<number, number>): number {
-  return Object.values(scores).reduce((a, b) => a + (b || 0), 0);
+/** Sum of (correct count × points_per_question) across all question types. */
+export function totalPoints(
+  scores: Record<number, number>,
+  pointsByQt: Record<number, number>
+): number {
+  let total = 0;
+  for (const [qid, count] of Object.entries(scores)) {
+    const ppq = pointsByQt[Number(qid)] ?? 1;
+    total += (count || 0) * ppq;
+  }
+  return total;
 }
 
 /**
  * Canonical ranking within a category:
- *  1) total score DESC
+ *  1) total points DESC (correct count × points_per_question)
  *  2) DOB DESC (younger student wins ties)
  *  3) full name ASC (alphabetical tertiary tiebreaker)
  */
 export function sortByCanonicalRank(
   students: Student[],
-  scoresByStudent: Map<number, Record<number, number>>
+  scoresByStudent: Map<number, Record<number, number>>,
+  pointsByQt: Record<number, number>
 ): Student[] {
   return [...students].sort((a, b) => {
-    const ta = sumScores(scoresByStudent.get(a.id) ?? {});
-    const tb = sumScores(scoresByStudent.get(b.id) ?? {});
+    const ta = totalPoints(scoresByStudent.get(a.id) ?? {}, pointsByQt);
+    const tb = totalPoints(scoresByStudent.get(b.id) ?? {}, pointsByQt);
     if (tb !== ta) return tb - ta;
     const ad = a.dob ? new Date(a.dob).getTime() : 0;
     const bd = b.dob ? new Date(b.dob).getTime() : 0;
@@ -106,12 +118,13 @@ function assignTrophies(
   grouped: Map<string, Student[]>,
   scoresByStudent: Map<number, Record<number, number>>,
   trophyTypes: TrophyType[],
-  allocations: TrophyAllocation[]
+  allocations: TrophyAllocation[],
+  pointsByQt: Record<number, number>
 ): Map<number, TrophyType> {
   const ordered = [...trophyTypes].sort((a, b) => a.display_order - b.display_order);
   const out = new Map<number, TrophyType>();
   for (const [category, list] of grouped.entries()) {
-    const sorted = sortByCanonicalRank(list, scoresByStudent);
+    const sorted = sortByCanonicalRank(list, scoresByStudent, pointsByQt);
     const queue = [...sorted];
     for (const tt of ordered) {
       const alloc = allocations.find(

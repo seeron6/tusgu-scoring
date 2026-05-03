@@ -86,27 +86,29 @@ export function leaderboardToPdf(
     doc.text(`${list.length} students`, 100, y);
     y += 8;
 
-    const head: string[] = ["#", "Name", "DOB", "Age", "Centre", "Teacher"];
+    const head: string[] = ["#", "Name"];
     if (showScores) {
       for (const qt of questionTypes) head.push(qt.name);
       head.push("Total", "%");
     }
-    head.push("Trophy");
+    head.push("Trophy", "DOB", "Age", "Centre", "Teacher");
 
     const body = list.map((r) => {
-      const arr: (string | number)[] = [
-        r.rank,
-        r.student.full_name,
+      const arr: (string | number)[] = [r.rank, r.student.full_name];
+      if (showScores) {
+        for (const qt of questionTypes) {
+          const correct = r.scoresByType[qt.id] ?? 0;
+          arr.push(correct * qt.points_per_question);
+        }
+        arr.push(r.totalScore, `${r.percentage.toFixed(1)}%`);
+      }
+      arr.push(
+        r.trophy ? `${r.trophy.icon ?? ""} ${r.trophy.name}`.trim() : "—",
         r.student.dob ?? "",
         r.age ?? "",
         r.student.centre ?? "",
-        r.student.teacher ?? "",
-      ];
-      if (showScores) {
-        for (const qt of questionTypes) arr.push(r.scoresByType[qt.id] ?? 0);
-        arr.push(r.totalScore, `${r.percentage.toFixed(1)}%`);
-      }
-      arr.push(r.trophy ? `${r.trophy.icon ?? ""} ${r.trophy.name}`.trim() : "—");
+        r.student.teacher ?? ""
+      );
       return arr;
     });
 

@@ -35,7 +35,9 @@ function ScoresInner() {
   const [students, setStudents] = React.useState<Student[] | null>(null);
   const [questionTypes, setQuestionTypes] = React.useState<QuestionType[]>([]);
   const [selectedId, setSelectedId] = React.useState<number | null>(null);
-  const [scores, setScores] = React.useState<Record<number, number>>({});
+  // Scores are tracked as raw string values so users can clear / re-type the
+  // field without fighting a sticky leading 0. Numeric value is parsed on save.
+  const [scoreText, setScoreText] = React.useState<Record<number, string>>({});
   const [search, setSearch] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [importOpen, setImportOpen] = React.useState(false);
@@ -57,11 +59,15 @@ function ScoresInner() {
 
   React.useEffect(() => {
     if (selectedId == null) {
-      setScores({});
+      setScoreText({});
       return;
     }
     getStudentScores(selectedId)
-      .then(setScores)
+      .then((m) => {
+        const text: Record<number, string> = {};
+        for (const [k, v] of Object.entries(m)) text[Number(k)] = String(v ?? "");
+        setScoreText(text);
+      })
       .catch((e) => toast.error(asMsg(e, "Failed to load scores")));
   }, [selectedId]);
 
@@ -79,7 +85,13 @@ function ScoresInner() {
   }, [students, search]);
 
   const selected = students?.find((s) => s.id === selectedId) ?? null;
-  const total = Object.values(scores).reduce((a, b) => a + (b || 0), 0);
+
+  // value field stores the raw count of correct answers; display total
+  // multiplies each by the question type's points_per_question.
+  const total = questionTypes.reduce((sum, qt) => {
+    const v = parseInt(scoreText[qt.id] ?? "", 10);
+    return sum + (Number.isFinite(v) ? v : 0) * qt.points_per_question;
+  }, 0);
   const max = questionTypes.reduce((sum, q) => sum + q.points_per_question * q.max_questions, 0);
   const pct = max > 0 ? (total / max) * 100 : 0;
 
@@ -87,7 +99,14 @@ function ScoresInner() {
     if (!selectedId) return;
     setBusy(true);
     try {
-      await saveStudentScores(selectedId, scores);
+      const out: Record<number, number> = {};
+      for (const qt of questionTypes) {
+        const raw = scoreText[qt.id] ?? "";
+        const n = raw === "" ? 0 : parseInt(raw, 10);
+        const clamped = Math.max(0, Math.min(qt.max_questions, Number.isFinite(n) ? n : 0));
+        out[qt.id] = clamped;
+      }
+      await saveStudentScores(selectedId, out);
       toast.success("Scores saved");
     } catch (e) {
       toast.error(asMsg(e, "Save failed"));
@@ -231,24 +250,44 @@ function ScoresInner() {
                 </div>
                 <div className="px-4 sm:px-6 py-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {questionTypes.map((qt) => {
-                    const maxQt = qt.points_per_question * qt.max_questions;
-                    const v = scores[qt.id] ?? 0;
+                    const raw = scoreText[qt.id] ?? "";
+                    const n = parseInt(raw, 10);
+                    const correct = Number.isFinite(n) ? n : 0;
+                    const points = correct * qt.points_per_question;
+                    const maxPoints = qt.points_per_question * qt.max_questions;
                     return (
                       <div key={qt.id}>
                         <Label>
                           {qt.name}{" "}
-                          <span className="text-xs text-[#7A7770] font-normal">(max {maxQt})</span>
+                          <span className="text-xs text-[#7A7770] font-normal">
+                            (correct out of {qt.max_questions})
+                          </span>
                         </Label>
                         <Input
                           type="number"
+                          inputMode="numeric"
                           min={0}
-                          max={maxQt}
-                          value={v}
+                          max={qt.max_questions}
+                          value={raw}
+                          placeholder="0"
                           onChange={(e) => {
-                            const n = Math.max(0, Math.min(maxQt, parseInt(e.target.value || "0", 10)));
-                            setScores((m) => ({ ...m, [qt.id]: Number.isFinite(n) ? n : 0 }));
+                            const v = e.target.value;
+                            // Allow empty (so the user can fully clear and re-type)
+                            // and any digits up to the max question count.
+                            if (v === "") {
+                              setScoreText((m) => ({ ...m, [qt.id]: "" }));
+                              return;
+                            }
+                            const num = parseInt(v, 10);
+                            if (!Number.isFinite(num)) return;
+                            const clamped = Math.max(0, Math.min(qt.max_questions, num));
+                            setScoreText((m) => ({ ...m, [qt.id]: String(clamped) }));
                           }}
                         />
+                        <div className="text-[11px] text-[#7A7770] mt-1 tabular-nums">
+                          = <span className="font-semibold text-[#1F1E1B]">{points}</span> /{" "}
+                          {maxPoints} pts ({qt.points_per_question} per question)
+                        </div>
                       </div>
                     );
                   })}

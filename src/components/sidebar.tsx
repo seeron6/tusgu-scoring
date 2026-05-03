@@ -27,6 +27,8 @@ const NAV = [
   { href: "/sync", label: "Sync", icon: RefreshCcw, locked: true },
 ] as const;
 
+const LOGO_URL = `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/brand-logo.jpeg`;
+
 export function Sidebar() {
   const pathname = usePathname();
   const { unlocked, lock } = useAuth();
@@ -40,15 +42,10 @@ export function Sidebar() {
     <>
       {/* Mobile top bar */}
       <div className="md:hidden flex items-center justify-between px-4 py-3 bg-[#FAF9F5] border-b border-[#E8E3D7] sticky top-0 z-30">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-md bg-[#1B3A6B] flex items-center justify-center">
-            <span className="text-white text-sm font-semibold tracking-tight font-serif">T</span>
-          </div>
-          <div className="leading-tight">
-            <div className="text-[13px] font-semibold text-[#1F1E1B] font-serif tracking-tight">TUSGU</div>
-            <div className="text-[10px] text-[#7A7770]">Competition Portal</div>
-          </div>
-        </div>
+        <Link href="/students" className="flex items-center">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={LOGO_URL} alt="TUSGU Educational Services" className="h-9 w-auto" />
+        </Link>
         <button
           onClick={() => setMobileOpen((v) => !v)}
           className="p-2 -mr-2 text-[#1F1E1B]"
@@ -66,15 +63,13 @@ export function Sidebar() {
         )}
       >
         <div className="hidden md:block px-5 pt-6 pb-5">
-          <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 rounded-lg bg-[#1B3A6B] flex items-center justify-center shadow-[0_2px_4px_-1px_rgba(27,58,107,0.25)]">
-              <span className="text-white text-sm font-semibold tracking-tight font-serif">T</span>
+          <Link href="/students" className="block">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={LOGO_URL} alt="TUSGU Educational Services" className="h-12 w-auto" />
+            <div className="text-[10.5px] tracking-[0.18em] uppercase text-[#7A7770] mt-2 ml-1">
+              Competition Portal
             </div>
-            <div className="leading-tight">
-              <div className="text-[14px] font-semibold text-[#1F1E1B] font-serif tracking-tight">TUSGU</div>
-              <div className="text-[11px] text-[#7A7770]">Competition Portal</div>
-            </div>
-          </div>
+          </Link>
         </div>
 
         <nav className="flex-1 px-3 py-3 md:py-2 space-y-0.5 overflow-y-auto">

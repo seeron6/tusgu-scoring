@@ -431,7 +431,8 @@ export function previewScoreImport(
       const v = Number(raw[col]);
       if (Number.isFinite(v)) {
         const qt = qtById.get(Number(typeIdStr));
-        const max = qt ? qt.points_per_question * qt.max_questions : Infinity;
+        // value is the count of correct questions, capped at max_questions
+        const max = qt ? qt.max_questions : Infinity;
         values[Number(typeIdStr)] = Math.max(0, Math.min(max, v));
       }
     }
@@ -467,7 +468,11 @@ export function leaderboardToWorkbook(
       Teacher: r.student.teacher ?? "",
     };
     if (showScores) {
-      for (const qt of questionTypes) base[qt.name] = r.scoresByType[qt.id] ?? 0;
+      for (const qt of questionTypes) {
+        const correct = r.scoresByType[qt.id] ?? 0;
+        base[`${qt.name} (correct)`] = correct;
+        base[`${qt.name} (points)`] = correct * qt.points_per_question;
+      }
       base["Total Score"] = r.totalScore;
       base["Max Possible"] = r.maxPossibleScore;
       base["Percentage"] = Math.round(r.percentage * 100) / 100;

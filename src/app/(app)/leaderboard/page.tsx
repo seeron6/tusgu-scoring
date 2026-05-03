@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import { Trophy, Award, X, Download, FileText, FileSpreadsheet } from "lucide-react";
+import { Trophy, Award, X, Download, FileText, FileSpreadsheet, ImageIcon } from "lucide-react";
 import toast from "react-hot-toast";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
@@ -251,16 +251,16 @@ function CategorySection({
             <tr>
               <th className="w-12">Rank</th>
               <th>Name</th>
-              <th>DOB</th>
-              <th>Age</th>
-              <th>Centre</th>
-              <th>Teacher</th>
               {questionTypes.map((qt) => (
                 <th key={qt.id} className="text-right">{qt.name}</th>
               ))}
               <th className="text-right">Total</th>
               <th className="text-right">%</th>
               {showTrophy && <th>Trophy</th>}
+              <th>DOB</th>
+              <th>Age</th>
+              <th>Centre</th>
+              <th>Teacher</th>
             </tr>
           </thead>
           <tbody>
@@ -268,15 +268,16 @@ function CategorySection({
               <tr key={r.student.id}>
                 <td><RankBadge rank={r.rank} /></td>
                 <td className="font-medium">{r.student.full_name}</td>
-                <td className="text-[#7A7770]">{formatDate(r.student.dob)}</td>
-                <td className="text-[#4A4843]">{r.age ?? ""}</td>
-                <td className="text-[#4A4843]">{r.student.centre ?? ""}</td>
-                <td className="text-[#4A4843]">{r.student.teacher ?? ""}</td>
-                {questionTypes.map((qt) => (
-                  <td key={qt.id} className="text-right tabular-nums">
-                    {r.scoresByType[qt.id] ?? 0}
-                  </td>
-                ))}
+                {questionTypes.map((qt) => {
+                  const correct = r.scoresByType[qt.id] ?? 0;
+                  const points = correct * qt.points_per_question;
+                  return (
+                    <td key={qt.id} className="text-right tabular-nums">
+                      <span className="font-medium">{points}</span>
+                      <span className="text-[10.5px] text-[#A8A39B] ml-1">({correct})</span>
+                    </td>
+                  );
+                })}
                 <td className="text-right font-semibold tabular-nums">{r.totalScore}</td>
                 <td className="text-right text-[#7A7770] tabular-nums">{r.percentage.toFixed(1)}%</td>
                 {showTrophy && (
@@ -288,6 +289,10 @@ function CategorySection({
                     )}
                   </td>
                 )}
+                <td className="text-[#7A7770]">{formatDate(r.student.dob)}</td>
+                <td className="text-[#4A4843]">{r.age ?? ""}</td>
+                <td className="text-[#4A4843]">{r.student.centre ?? ""}</td>
+                <td className="text-[#4A4843]">{r.student.teacher ?? ""}</td>
               </tr>
             ))}
           </tbody>
@@ -372,6 +377,8 @@ function FilterChip({
   );
 }
 
+type ExportFormat = "xlsx" | "pdf" | "jpeg" | "png";
+
 function ExportModal({
   open, onClose, rows, questionTypes,
 }: {
@@ -380,7 +387,7 @@ function ExportModal({
   rows: LeaderboardRow[];
   questionTypes: QuestionType[];
 }) {
-  const [format, setFormat] = React.useState<"xlsx" | "pdf">("xlsx");
+  const [format, setFormat] = React.useState<ExportFormat>("xlsx");
   const [hideScores, setHideScores] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
 
@@ -391,7 +398,7 @@ function ExportModal({
       if (format === "xlsx") {
         const buf = leaderboardToWorkbook(rows, questionTypes, { hideScores });
         downloadWorkbook(buf, `tusgu-leaderboard-${stamp}.xlsx`);
-      } else {
+      } else if (format === "pdf") {
         const { leaderboardToPdf } = await import("@/lib/pdf");
         const buf = leaderboardToPdf(rows, questionTypes, { hideScores });
         const blob = new Blob([buf], { type: "application/pdf" });
@@ -401,8 +408,45 @@ function ExportModal({
         a.download = `tusgu-leaderboard-${stamp}.pdf`;
         a.click();
         URL.revokeObjectURL(url);
+      } else {
+        // jpeg / png — capture each on-page category section, bundle as a zip
+        const els = document.querySelectorAll<HTMLElement>("[data-export-section]");
+        if (els.length === 0) {
+          toast.error("Nothing to capture — the leaderboard is empty.");
+          return;
+        }
+        const [{ default: html2canvas }, { default: JSZip }] = await Promise.all([
+          import("html2canvas-pro"),
+          import("jszip"),
+        ]);
+        const zip = new JSZip();
+        for (const el of Array.from(els)) {
+          const baseName =
+            el.dataset.exportName?.replace(/[^A-Za-z0-9 _-]/g, "").trim() || "section";
+          const canvas = await html2canvas(el, {
+            backgroundColor: "#FFFFFF",
+            scale: 2,
+            useCORS: true,
+          });
+          const blob: Blob = await new Promise((resolve, reject) => {
+            canvas.toBlob(
+              (b) => (b ? resolve(b) : reject(new Error("Canvas to blob failed"))),
+              format === "jpeg" ? "image/jpeg" : "image/png",
+              format === "jpeg" ? 0.92 : undefined
+            );
+          });
+          zip.file(`${baseName}.${format === "jpeg" ? "jpg" : "png"}`, blob);
+        }
+        const out = await zip.generateAsync({ type: "blob" });
+        const url = URL.createObjectURL(out);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `tusgu-leaderboard-${format}-${stamp}.zip`;
+        a.click();
+        URL.revokeObjectURL(url);
+        toast.success(`${els.length} image${els.length === 1 ? "" : "s"} exported`);
       }
-      toast.success("Export complete");
+      if (format === "xlsx" || format === "pdf") toast.success("Export complete");
       onClose();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Export failed");
@@ -427,33 +471,42 @@ function ExportModal({
         <div>
           <Label>Format</Label>
           <div className="grid grid-cols-2 gap-2">
-            <FormatTile id="xlsx" current={format} setCurrent={setFormat} icon={<FileSpreadsheet className="w-4 h-4" />} title="Excel" sub=".xlsx" />
+            <FormatTile id="xlsx" current={format} setCurrent={setFormat} icon={<FileSpreadsheet className="w-4 h-4" />} title="Excel" sub=".xlsx workbook" />
             <FormatTile id="pdf" current={format} setCurrent={setFormat} icon={<FileText className="w-4 h-4" />} title="PDF" sub="Print-ready" />
+            <FormatTile id="jpeg" current={format} setCurrent={setFormat} icon={<ImageIcon className="w-4 h-4" />} title="JPEGs (zip)" sub="One per category" />
+            <FormatTile id="png" current={format} setCurrent={setFormat} icon={<ImageIcon className="w-4 h-4" />} title="PNGs (zip)" sub="Lossless, larger" />
           </div>
         </div>
-        <label className="flex items-start gap-2.5 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={hideScores}
-            onChange={(e) => setHideScores(e.target.checked)}
-            className="mt-0.5 accent-[#1B3A6B]"
-          />
-          <span>
-            <span className="text-[13px] font-medium text-[#1F1E1B] block">Hide individual scores</span>
-            <span className="text-[11px] text-[#7A7770]">Useful for public-facing summaries.</span>
-          </span>
-        </label>
+        {(format === "xlsx" || format === "pdf") && (
+          <label className="flex items-start gap-2.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={hideScores}
+              onChange={(e) => setHideScores(e.target.checked)}
+              className="mt-0.5 accent-[#1B3A6B]"
+            />
+            <span>
+              <span className="text-[13px] font-medium text-[#1F1E1B] block">Hide individual scores</span>
+              <span className="text-[11px] text-[#7A7770]">Useful for public-facing summaries.</span>
+            </span>
+          </label>
+        )}
+        {(format === "jpeg" || format === "png") && (
+          <div className="text-[11.5px] text-[#7A7770] bg-[#F5F2EB] border border-[#E8E3D7] rounded p-3 leading-relaxed">
+            Captures each category section currently on the page (apply trophies first if you want them visible). The images are bundled into a single .zip download.
+          </div>
+        )}
       </div>
     </Modal>
   );
 }
 
-function FormatTile<T extends string>({
+function FormatTile({
   id, current, setCurrent, icon, title, sub,
 }: {
-  id: T;
-  current: T;
-  setCurrent: (v: T) => void;
+  id: ExportFormat;
+  current: ExportFormat;
+  setCurrent: (v: ExportFormat) => void;
   icon: React.ReactNode;
   title: string;
   sub: string;

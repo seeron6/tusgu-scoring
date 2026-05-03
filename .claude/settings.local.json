@@ -51,7 +51,27 @@
       "Bash(gh auth *)",
       "Bash(rm -f package-lock.json)",
       "Bash(npm install *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(git -c user.name=TUSGU -c user.email=dev@tusgu.local commit -m ' *)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "mcp__Claude_in_Chrome__list_connected_browsers",
+      "mcp__Claude_in_Chrome__select_browser",
+      "mcp__Claude_in_Chrome__browser_batch",
+      "mcp__Claude_in_Chrome__navigate",
+      "mcp__Claude_in_Chrome__computer",
+      "Bash(curl -sS \"https://rkzxryhrjmihgcojmpgs.supabase.co/rest/v1/question_types?select=id,name,max_questions&order=display_order.asc\" -H \"apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJrenhyeWhyam1paGdjb2ptcGdzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc4MjUyOTYsImV4cCI6MjA5MzQwMTI5Nn0.17MCTssoO6-djiH_9ch2DOR7XgRtyFiMkirs55LjcYM\" -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJrenhyeWhyam1paGdjb2ptcGdzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc4MjUyOTYsImV4cCI6MjA5MzQwMTI5Nn0.17MCTssoO6-djiH_9ch2DOR7XgRtyFiMkirs55LjcYM\")",
+      "Bash(gh repo *)",
+      "Bash(git remote *)",
+      "Bash(git push *)",
+      "Bash(gh secret *)",
+      "Bash(gh api *)",
+      "Bash(gh run *)",
+      "Bash(gh workflow *)",
+      "Bash(curl -sSI -o /dev/null -w \"HTTP %{http_code}  url=%{url_effective}\\\\n\" -L \"https://seeron6.github.io/tusgu-scoring/\")",
+      "Bash(curl -sS -L \"https://seeron6.github.io/tusgu-scoring/students/\")",
+      "Bash(curl -sSI -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"https://seeron6.github.io/tusgu-scoring/\")",
+      "Bash(curl -sSI -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"https://seeron6.github.io/tusgu-scoring/students/\")",
+      "Bash(curl -sSI -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"https://seeron6.github.io/tusgu-scoring/scores/\")"
     ]
   }
 }
