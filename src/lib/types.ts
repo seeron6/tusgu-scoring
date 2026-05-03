@@ -1,9 +1,6 @@
-export type Category = {
-  id: number;
-  name: string;
-  description: string | null;
-  created_at: string;
-};
+// =============================================================
+// Domain types — mirror the Supabase schema in supabase/schema.sql
+// =============================================================
 
 export type QuestionType = {
   id: number;
@@ -11,21 +8,36 @@ export type QuestionType = {
   points_per_question: number;
   max_questions: number;
   display_order: number;
-  created_at: string;
+  created_at?: string;
 };
 
 export type Student = {
   id: number;
-  first_name: string;
-  last_name: string;
-  dob: string;
-  category_id: number;
-  centre: string;
-  teacher: string;
-  created_at: string;
+  student_code: string | null;
+  exam_code: string | null;
+  barcode: string | null;
+  full_name: string;
+  dob: string | null;            // ISO yyyy-mm-dd
+  category: string | null;
+  level: string | null;
+  listening_category: string | null;
+  listening_code: string | null;
+  centre: string | null;
+  teacher: string | null;
+  ci_code: string | null;
+  tshirt_size: string | null;
+  email: string | null;
+  phone: string | null;
+  report_time: string | null;
+  comp_time: string | null;
+  deduction: string | null;
+  notes: string | null;
+  extra: Record<string, unknown>;
+  created_at?: string;
+  updated_at?: string;
 };
 
-export type StudentWithCategory = Student & { category_name: string };
+export type StudentInsert = Omit<Student, "id" | "created_at" | "updated_at">;
 
 export type Score = {
   id: number;
@@ -33,6 +45,7 @@ export type Score = {
   question_type_id: number;
   value: number;
   recorded_at: string;
+  recorded_by: string | null;
 };
 
 export type TrophyType = {
@@ -46,17 +59,18 @@ export type TrophyType = {
 export type TrophyAllocation = {
   id: number;
   trophy_type_id: number;
-  category_id: number;
+  category: string;
   quantity: number;
 };
 
 export type LeaderboardRow = {
   rank: number;
-  student: StudentWithCategory;
-  age: number;
+  student: Student;
+  age: number | null;
   scoresByType: Record<number, number>;
   totalScore: number;
   maxPossibleScore: number;
   percentage: number;
   trophy: TrophyType | null;
 };
+

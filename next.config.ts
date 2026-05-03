@@ -1,32 +1,21 @@
+import path from "node:path";
 import type { NextConfig } from "next";
 
-const securityHeaders = [
-  { key: "X-Frame-Options", value: "DENY" },
-  { key: "X-Content-Type-Options", value: "nosniff" },
-  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
-  {
-    key: "Content-Security-Policy",
-    value: [
-      "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-      "style-src 'self' 'unsafe-inline' fonts.googleapis.com",
-      "font-src 'self' fonts.gstatic.com data:",
-      "img-src 'self' data: blob:",
-      "connect-src 'self'",
-      "frame-ancestors 'none'",
-      "base-uri 'self'",
-      "form-action 'self'",
-    ].join("; "),
-  },
-  { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains; preload" },
-];
+// GitHub Pages serves the site under https://<user>.github.io/<repo>/.
+// Set NEXT_PUBLIC_BASE_PATH = "/<repo>" at build time so all asset URLs and
+// router links resolve correctly. Locally (npm run dev) leave it empty.
+const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
 const nextConfig: NextConfig = {
-  serverExternalPackages: ["better-sqlite3"],
-  async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
-  },
+  output: "export",
+  trailingSlash: true,
+  basePath: basePath || undefined,
+  assetPrefix: basePath || undefined,
+  images: { unoptimized: true },
+  reactStrictMode: true,
+  // Pin the workspace root to this directory so Turbopack doesn't crawl up
+  // when the project lives inside a git worktree alongside another lockfile.
+  turbopack: { root: path.resolve() },
 };
 
 export default nextConfig;

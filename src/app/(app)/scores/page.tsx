@@ -1,6 +1,8 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ClipboardList, Search, Save, Upload, Users } from "lucide-react";
+import * as React from "react";
+import {
+  ClipboardList, Search, Save, Upload, Users, ScanLine, X,
+} from "lucide-react";
 import toast from "react-hot-toast";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Select } from "@/components/ui/input";
@@ -8,45 +10,71 @@ import { Modal } from "@/components/ui/modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/sidebar";
-import type { QuestionType, StudentWithCategory } from "@/lib/types";
+import { BarcodeScannerModal } from "@/components/barcode-scanner";
+import { ProtectedPage } from "@/lib/auth-gate";
+import {
+  findStudentByCode, getStudentScores, listQuestionTypes, listStudents,
+  saveStudentScores,
+} from "@/lib/data";
+import {
+  parseWorkbook, autoMapColumns, previewScoreImport,
+  type ParsedRow,
+} from "@/lib/excel";
+import { saveStudentScores as saveScores } from "@/lib/data";
+import type { QuestionType, Student } from "@/lib/types";
 
 export default function ScoresPage() {
-  const [students, setStudents] = useState<StudentWithCategory[] | null>(null);
-  const [questionTypes, setQuestionTypes] = useState<QuestionType[]>([]);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [scores, setScores] = useState<Record<number, number>>({});
-  const [search, setSearch] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [importOpen, setImportOpen] = useState(false);
+  return (
+    <ProtectedPage label="Scores">
+      <ScoresInner />
+    </ProtectedPage>
+  );
+}
+
+function ScoresInner() {
+  const [students, setStudents] = React.useState<Student[] | null>(null);
+  const [questionTypes, setQuestionTypes] = React.useState<QuestionType[]>([]);
+  const [selectedId, setSelectedId] = React.useState<number | null>(null);
+  const [scores, setScores] = React.useState<Record<number, number>>({});
+  const [search, setSearch] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [importOpen, setImportOpen] = React.useState(false);
+  const [scannerOpen, setScannerOpen] = React.useState(false);
 
   async function loadAll() {
-    const [s, q] = await Promise.all([
-      fetch("/api/students").then((r) => r.json()),
-      fetch("/api/question-types").then((r) => r.json()),
-    ]);
-    setStudents(s);
-    setQuestionTypes(q);
+    try {
+      const [s, q] = await Promise.all([listStudents(), listQuestionTypes()]);
+      setStudents(s);
+      setQuestionTypes(q);
+    } catch (e) {
+      toast.error(asMsg(e, "Failed to load data"));
+      setStudents([]);
+    }
   }
-  useEffect(() => {
+  React.useEffect(() => {
     loadAll();
   }, []);
 
-  useEffect(() => {
+  React.useEffect(() => {
     if (selectedId == null) {
       setScores({});
       return;
     }
-    fetch(`/api/scores/${selectedId}`)
-      .then((r) => r.json())
-      .then(setScores);
+    getStudentScores(selectedId)
+      .then(setScores)
+      .catch((e) => toast.error(asMsg(e, "Failed to load scores")));
   }, [selectedId]);
 
-  const filtered = useMemo(() => {
+  const filtered = React.useMemo(() => {
     if (!students) return [];
     const q = search.trim().toLowerCase();
     if (!q) return students;
     return students.filter((s) =>
-      `${s.first_name} ${s.last_name} ${s.category_name} ${s.centre} ${s.teacher}`.toLowerCase().includes(q)
+      [s.full_name, s.student_code, s.exam_code, s.barcode, s.category, s.centre, s.teacher]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(q)
     );
   }, [students, search]);
 
@@ -59,16 +87,27 @@ export default function ScoresPage() {
     if (!selectedId) return;
     setBusy(true);
     try {
-      const r = await fetch(`/api/scores/${selectedId}`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ scores }),
-      });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) return toast.error(d.error || "Save failed");
+      await saveStudentScores(selectedId, scores);
       toast.success("Scores saved");
+    } catch (e) {
+      toast.error(asMsg(e, "Save failed"));
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleScan(code: string) {
+    setSearch(code);
+    try {
+      const found = await findStudentByCode(code);
+      if (found) {
+        setSelectedId(found.id);
+        toast.success(`Selected ${found.full_name}`);
+      } else {
+        toast.error(`No student matching "${code}"`);
+      }
+    } catch (e) {
+      toast.error(asMsg(e, "Lookup failed"));
     }
   }
 
@@ -76,30 +115,34 @@ export default function ScoresPage() {
     <div>
       <PageHeader
         title="Scores"
-        description="Enter scores by question type for each student. Bulk import from Excel for large competitions."
+        description="Search by name, scan a barcode, or import scores in bulk. Each question type has a max — entries are clamped automatically."
         actions={
-          <Button variant="outline" onClick={() => setImportOpen(true)}>
-            <Upload className="w-4 h-4" />
-            Bulk Import
-          </Button>
+          <>
+            <Button variant="outline" onClick={() => setScannerOpen(true)}>
+              <ScanLine className="w-4 h-4" />
+              <span className="hidden sm:inline">Scan</span>
+            </Button>
+            <Button variant="outline" onClick={() => setImportOpen(true)}>
+              <Upload className="w-4 h-4" />
+              <span className="hidden sm:inline">Bulk Import</span>
+            </Button>
+          </>
         }
       />
 
       {students == null ? (
         <TableSkeleton rows={6} cols={3} />
       ) : students.length === 0 ? (
-        <div className="bg-white rounded-xl border border-[#E8E3D7] shadow-sm">
+        <div className="bg-white rounded-xl border border-[#E8E3D7]">
           <EmptyState
             icon={Users}
             title="No students yet"
             description="Add students first before entering scores."
-            action={
-              <Button onClick={() => (window.location.href = "/students")}>Go to Students</Button>
-            }
+            action={<Button onClick={() => (window.location.href = "/students")}>Go to Students</Button>}
           />
         </div>
       ) : questionTypes.length === 0 ? (
-        <div className="bg-white rounded-xl border border-[#E8E3D7] shadow-sm">
+        <div className="bg-white rounded-xl border border-[#E8E3D7]">
           <EmptyState
             icon={ClipboardList}
             title="No question types yet"
@@ -108,39 +151,49 @@ export default function ScoresPage() {
           />
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4 lg:gap-6">
           <div className="bg-white rounded-xl border border-[#E8E3D7] shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-[#E8E3D7]">
+            <div className="px-3 sm:px-4 py-3 border-b border-[#E8E3D7]">
               <div className="relative">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#A8A39B]" />
                 <Input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search students…"
-                  className="pl-9"
+                  className="pl-9 pr-10"
                 />
+                <button
+                  onClick={() => setScannerOpen(true)}
+                  title="Scan barcode"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-[#7A7770] hover:bg-[#F4F1E8] hover:text-[#1B3A6B]"
+                >
+                  <ScanLine className="w-4 h-4" />
+                </button>
               </div>
             </div>
-            <ul className="max-h-[600px] overflow-y-auto">
-              {filtered.map((s) => (
+            <ul className="max-h-[60vh] lg:max-h-[600px] overflow-y-auto">
+              {filtered.slice(0, 200).map((s) => (
                 <li key={s.id}>
                   <button
                     onClick={() => setSelectedId(s.id)}
-                    className={`w-full text-left px-4 py-3 border-b border-[#E8E3D7] transition-colors ${
+                    className={`w-full text-left px-3 sm:px-4 py-3 border-b border-[#E8E3D7] transition-colors ${
                       selectedId === s.id ? "bg-[#F4F1E8]" : "hover:bg-[#F5F2EB]"
                     }`}
                   >
-                    <div className="text-sm font-medium text-[#1F1E1B]">
-                      {s.first_name} {s.last_name}
-                    </div>
-                    <div className="text-xs text-[#7A7770] mt-0.5">
-                      {s.category_name} · {s.centre}
+                    <div className="text-sm font-medium text-[#1F1E1B] truncate">{s.full_name}</div>
+                    <div className="text-xs text-[#7A7770] mt-0.5 truncate">
+                      {[s.category, s.centre].filter(Boolean).join(" · ")}
                     </div>
                   </button>
                 </li>
               ))}
               {filtered.length === 0 && (
                 <li className="px-4 py-6 text-center text-sm text-[#7A7770]">No matches</li>
+              )}
+              {filtered.length > 200 && (
+                <li className="px-4 py-2 text-center text-[11px] text-[#A8A39B]">
+                  Showing first 200 — refine your search to see more.
+                </li>
               )}
             </ul>
           </div>
@@ -150,19 +203,33 @@ export default function ScoresPage() {
               <EmptyState
                 icon={ClipboardList}
                 title="Select a student"
-                description="Pick a student on the left to enter or edit their scores."
+                description="Pick a student on the left or scan a barcode."
               />
             ) : (
               <div>
-                <div className="px-6 py-4 border-b border-[#E8E3D7]">
-                  <h2 className="text-lg font-bold text-[#1F1E1B]">
-                    {selected.first_name} {selected.last_name}
-                  </h2>
-                  <div className="text-sm text-[#7A7770] mt-1">
-                    {selected.category_name} · {selected.centre} · Teacher: {selected.teacher}
+                <div className="px-4 sm:px-6 py-4 border-b border-[#E8E3D7] flex items-start gap-3">
+                  <div className="min-w-0 flex-1">
+                    <h2 className="text-base sm:text-lg font-bold text-[#1F1E1B] truncate">
+                      {selected.full_name}
+                    </h2>
+                    <div className="text-[12px] sm:text-sm text-[#7A7770] mt-1 flex flex-wrap gap-x-2 gap-y-0.5">
+                      {selected.category && <span>{selected.category}</span>}
+                      {selected.centre && <span>· {selected.centre}</span>}
+                      {selected.teacher && <span>· {selected.teacher}</span>}
+                      {selected.exam_code && (
+                        <span className="font-mono text-[#1B3A6B]">{selected.exam_code}</span>
+                      )}
+                    </div>
                   </div>
+                  <button
+                    onClick={() => setSelectedId(null)}
+                    className="text-[#7A7770] hover:text-[#1F1E1B] -mr-1 -mt-1 p-1.5"
+                    title="Clear selection"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
                 </div>
-                <div className="px-6 py-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="px-4 sm:px-6 py-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {questionTypes.map((qt) => {
                     const maxQt = qt.points_per_question * qt.max_questions;
                     const v = scores[qt.id] ?? 0;
@@ -186,16 +253,16 @@ export default function ScoresPage() {
                     );
                   })}
                 </div>
-                <div className="px-6 py-5 border-t border-[#E8E3D7] bg-[#FAF9F5] flex items-center justify-between">
+                <div className="px-4 sm:px-6 py-5 border-t border-[#E8E3D7] bg-[#FAF9F5] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                   <div>
                     <div className="text-xs text-[#7A7770] uppercase tracking-wide">Total Score</div>
-                    <div className="text-3xl font-bold text-[#1B3A6B]">
+                    <div className="text-2xl sm:text-3xl font-bold text-[#1B3A6B]">
                       {total}{" "}
-                      <span className="text-base text-[#7A7770] font-normal">/ {max}</span>
+                      <span className="text-sm sm:text-base text-[#7A7770] font-normal">/ {max}</span>
                     </div>
                     <div className="text-xs text-[#7A7770] mt-1">{pct.toFixed(1)}%</div>
                   </div>
-                  <Button onClick={save} disabled={busy} size="lg">
+                  <Button onClick={save} disabled={busy} size="lg" className="w-full sm:w-auto">
                     <Save className="w-4 h-4" />
                     {busy ? "Saving…" : "Save Scores"}
                   </Button>
@@ -206,76 +273,131 @@ export default function ScoresPage() {
         </div>
       )}
 
-      <ScoreImportModal open={importOpen} onClose={() => setImportOpen(false)} />
+      <ScoreImportModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        students={students ?? []}
+        questionTypes={questionTypes}
+        onComplete={loadAll}
+      />
+      <BarcodeScannerModal
+        open={scannerOpen}
+        onClose={() => setScannerOpen(false)}
+        onResult={handleScan}
+      />
     </div>
   );
 }
 
-type ImportData = {
-  headers: string[];
-  rows: Record<string, unknown>[];
-  rowCount: number;
-  mapping: { name: string | null; dob: string | null; types: Record<number, string | null> };
+function ScoreImportModal({
+  open, onClose, students, questionTypes, onComplete,
+}: {
+  open: boolean;
+  onClose: () => void;
+  students: Student[];
   questionTypes: QuestionType[];
-};
-
-function ScoreImportModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [stage, setStage] = useState<"pick" | "map" | "done">("pick");
-  const [data, setData] = useState<ImportData | null>(null);
-  const [mapping, setMapping] = useState<{ name: string | null; dob: string | null; types: Record<number, string | null> }>({
-    name: null,
-    dob: null,
-    types: {},
-  });
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{ upserted: number; matched: number; invalid: number } | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  onComplete: () => void;
+}) {
+  const [stage, setStage] = React.useState<"pick" | "map" | "done">("pick");
+  const [data, setData] = React.useState<{
+    headers: string[];
+    rows: ParsedRow[];
+    rowCount: number;
+    sheetName: string;
+    sheets: { name: string; rowCount: number }[];
+    fileName: string;
+  } | null>(null);
+  const [file, setFile] = React.useState<File | null>(null);
+  const [mapping, setMapping] = React.useState<{
+    name: string | null;
+    code: string | null;
+    types: Record<number, string | null>;
+  }>({ name: null, code: null, types: {} });
+  const [busy, setBusy] = React.useState(false);
+  const [result, setResult] = React.useState<{ matched: number; upserted: number; invalid: number } | null>(null);
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
 
   function reset() {
     setStage("pick");
     setData(null);
+    setFile(null);
+    setMapping({ name: null, code: null, types: {} });
     setResult(null);
-    setMapping({ name: null, dob: null, types: {} });
   }
 
-  async function upload(f: File) {
+  async function pickFile(f: File) {
     setBusy(true);
+    setFile(f);
     try {
-      const fd = new FormData();
-      fd.append("file", f);
-      const r = await fetch("/api/scores/import", { method: "POST", body: fd });
-      const d = await r.json();
-      if (!r.ok) {
-        toast.error(d.error || "Failed to parse file");
+      const wb = parseWorkbook(await f.arrayBuffer());
+      const sheet = wb.best ?? wb.sheets[0];
+      if (!sheet) {
+        toast.error("Empty workbook");
         return;
       }
-      setData(d);
-      setMapping(d.mapping);
+      const auto = autoMapColumns(sheet.headers);
+      const types: Record<number, string | null> = {};
+      for (const qt of questionTypes) {
+        const lc = qt.name.toLowerCase();
+        const matchedHeader = sheet.headers.find((h) =>
+          h.toLowerCase().includes(lc) ||
+          lc.split("/").some((part) => h.toLowerCase().includes(part.trim()))
+        );
+        types[qt.id] = matchedHeader ?? null;
+      }
+      setData({
+        headers: sheet.headers,
+        rows: sheet.rows,
+        rowCount: sheet.rowCount,
+        sheetName: sheet.sheetName,
+        sheets: wb.sheets.map((s) => ({ name: s.sheetName, rowCount: s.rowCount })),
+        fileName: f.name,
+      });
+      setMapping({
+        name: auto.full_name ?? null,
+        code: auto.exam_code ?? auto.student_code ?? auto.barcode ?? null,
+        types,
+      });
       setStage("map");
+    } catch (e) {
+      toast.error(asMsg(e, "Failed to parse file"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function selectSheet(name: string) {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const wb = parseWorkbook(await file.arrayBuffer());
+      const sheet = wb.sheets.find((s) => s.sheetName === name);
+      if (!sheet) return;
+      setData((d) => d ? { ...d, headers: sheet.headers, rows: sheet.rows, rowCount: sheet.rowCount, sheetName: name } : null);
     } finally {
       setBusy(false);
     }
   }
 
   async function commit() {
-    if (!data || !mapping.name) {
-      toast.error("Please choose the student name column");
-      return;
-    }
+    if (!data) return;
     setBusy(true);
     try {
-      const r = await fetch("/api/scores/import", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ rows: data.rows, mapping }),
-      });
-      const d = await r.json();
-      if (!r.ok) {
-        toast.error(d.error || "Import failed");
-        return;
+      const preview = previewScoreImport(data.rows, mapping, students, questionTypes);
+      let upserted = 0;
+      for (const r of preview.valid) {
+        await saveScores(r.studentId, r.values);
+        upserted += Object.keys(r.values).length;
       }
-      setResult(d);
+      setResult({
+        matched: preview.valid.length,
+        upserted,
+        invalid: preview.invalid.length,
+      });
       setStage("done");
+      onComplete();
+    } catch (e) {
+      toast.error(asMsg(e, "Import failed"));
     } finally {
       setBusy(false);
     }
@@ -294,33 +416,16 @@ function ScoreImportModal({ open, onClose }: { open: boolean; onClose: () => voi
       width="max-w-3xl"
       footer={
         stage === "pick" ? (
-          <Button
-            variant="outline"
-            onClick={() => {
-              reset();
-              onClose();
-            }}
-          >
-            Cancel
-          </Button>
+          <Button variant="outline" onClick={() => { reset(); onClose(); }}>Cancel</Button>
         ) : stage === "map" ? (
           <>
-            <Button variant="outline" onClick={() => setStage("pick")} disabled={busy}>
-              Back
-            </Button>
-            <Button onClick={commit} disabled={busy}>
+            <Button variant="outline" onClick={() => { reset(); }} disabled={busy}>Back</Button>
+            <Button onClick={commit} disabled={busy || !mapping.name}>
               {busy ? "Importing…" : "Import"}
             </Button>
           </>
         ) : (
-          <Button
-            onClick={() => {
-              reset();
-              onClose();
-            }}
-          >
-            Done
-          </Button>
+          <Button onClick={() => { reset(); onClose(); }}>Done</Button>
         )
       }
     >
@@ -331,29 +436,28 @@ function ScoreImportModal({ open, onClose }: { open: boolean; onClose: () => voi
             onDrop={(e) => {
               e.preventDefault();
               const f = e.dataTransfer.files[0];
-              if (f) upload(f);
+              if (f) pickFile(f);
             }}
             onDragOver={(e) => e.preventDefault()}
-            className="border-2 border-dashed border-[#D9D2BE] hover:border-[#1B3A6B] hover:bg-[#F4F1E8] rounded-lg p-10 text-center cursor-pointer transition-colors"
+            className="border-2 border-dashed border-[#D9D2BE] hover:border-[#1B3A6B] hover:bg-[#F4F1E8] rounded-lg p-8 sm:p-10 text-center cursor-pointer transition-colors"
           >
             <Upload className="w-10 h-10 mx-auto text-[#A8A39B] mb-3" />
-            <div className="text-sm font-medium text-[#1F1E1B] mb-1">Drop your scores Excel file here</div>
-            <div className="text-xs text-[#7A7770]">or click to browse (.xlsx, .xls)</div>
+            <div className="text-sm font-medium text-[#1F1E1B] mb-1">Drop your scores Excel/.xlsm file here</div>
+            <div className="text-xs text-[#7A7770]">or click to browse (.xlsx, .xlsm, .xls, .csv)</div>
             <input
               ref={inputRef}
               type="file"
-              accept=".xlsx,.xls"
+              accept=".xlsx,.xlsm,.xls,.csv"
               className="hidden"
               onChange={(e) => {
                 const f = e.target.files?.[0];
-                if (f) upload(f);
+                if (f) pickFile(f);
               }}
             />
           </div>
           <div className="text-xs text-[#7A7770] bg-[#F5F2EB] border border-[#E8E3D7] rounded p-3">
-            <strong className="text-[#1F1E1B]">Expected columns:</strong> a Name column (full name as
-            <code className="bg-white px-1 mx-1 rounded">First Last</code>), optionally Date of Birth (helps disambiguate
-            duplicate names), and one column per question type matching the names in Setup.
+            <strong className="text-[#1F1E1B]">Expected columns:</strong> Name (or Student Code / Exam Code / Barcode)
+            and one column per question type matching the names in Setup.
           </div>
         </div>
       )}
@@ -361,9 +465,23 @@ function ScoreImportModal({ open, onClose }: { open: boolean; onClose: () => voi
       {stage === "map" && data && (
         <div className="space-y-4">
           <div className="text-sm text-[#7A7770]">
-            Detected <strong className="text-[#1F1E1B]">{data.rowCount}</strong> rows.
+            <span className="font-medium text-[#1F1E1B]">{data.fileName}</span> · sheet{" "}
+            <span className="font-medium text-[#1F1E1B]">{data.sheetName}</span> ·{" "}
+            <span className="font-medium text-[#1F1E1B]">{data.rowCount}</span> rows
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          {data.sheets.length > 1 && (
+            <div>
+              <Label>Sheet</Label>
+              <Select value={data.sheetName} onChange={(e) => selectSheet(e.target.value)}>
+                {data.sheets.map((s) => (
+                  <option key={s.name} value={s.name}>
+                    {s.name} ({s.rowCount} rows)
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <Label>Student Name *</Label>
               <Select
@@ -372,43 +490,40 @@ function ScoreImportModal({ open, onClose }: { open: boolean; onClose: () => voi
               >
                 <option value="">— Select column —</option>
                 {data.headers.map((h) => (
-                  <option key={h} value={h}>
-                    {h}
-                  </option>
+                  <option key={h} value={h}>{h}</option>
                 ))}
               </Select>
             </div>
             <div>
-              <Label>Date of Birth (optional)</Label>
+              <Label>Code (Exam / Student / Barcode)</Label>
               <Select
-                value={mapping.dob ?? ""}
-                onChange={(e) => setMapping((m) => ({ ...m, dob: e.target.value || null }))}
+                value={mapping.code ?? ""}
+                onChange={(e) => setMapping((m) => ({ ...m, code: e.target.value || null }))}
               >
                 <option value="">— Not mapped —</option>
                 {data.headers.map((h) => (
-                  <option key={h} value={h}>
-                    {h}
-                  </option>
+                  <option key={h} value={h}>{h}</option>
                 ))}
               </Select>
             </div>
           </div>
           <div className="text-sm font-medium text-[#1F1E1B] mt-2">Score columns</div>
-          <div className="grid grid-cols-2 gap-3">
-            {data.questionTypes.map((qt) => (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {questionTypes.map((qt) => (
               <div key={qt.id}>
                 <Label>{qt.name}</Label>
                 <Select
                   value={mapping.types[qt.id] ?? ""}
                   onChange={(e) =>
-                    setMapping((m) => ({ ...m, types: { ...m.types, [qt.id]: e.target.value || null } }))
+                    setMapping((m) => ({
+                      ...m,
+                      types: { ...m.types, [qt.id]: e.target.value || null },
+                    }))
                   }
                 >
                   <option value="">— Skip —</option>
                   {data.headers.map((h) => (
-                    <option key={h} value={h}>
-                      {h}
-                    </option>
+                    <option key={h} value={h}>{h}</option>
                   ))}
                 </Select>
               </div>
@@ -422,10 +537,16 @@ function ScoreImportModal({ open, onClose }: { open: boolean; onClose: () => voi
           <div className="text-4xl mb-2">✓</div>
           <div className="text-base font-semibold text-[#1F1E1B] mb-1">Import complete</div>
           <div className="text-sm text-[#7A7770]">
-            {result.matched} students matched · {result.upserted} score values written · {result.invalid} rows skipped
+            {result.matched} students matched · {result.upserted} score values written ·{" "}
+            {result.invalid} rows skipped
           </div>
         </div>
       )}
     </Modal>
   );
+}
+
+function asMsg(e: unknown, fallback: string): string {
+  if (e instanceof Error) return e.message;
+  return fallback;
 }

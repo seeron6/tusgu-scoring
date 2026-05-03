@@ -1,6 +1,8 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
-import { Plus, Pencil, Trash2, Award, GripVertical, Save, Copy, Eye, Settings, Users } from "lucide-react";
+import * as React from "react";
+import {
+  Plus, Pencil, Trash2, Award, Save, Copy, Settings, Users, FileText, Download,
+} from "lucide-react";
 import toast from "react-hot-toast";
 import { Button } from "@/components/ui/button";
 import { Input, Label } from "@/components/ui/input";
@@ -8,48 +10,79 @@ import { Modal, ConfirmDialog } from "@/components/ui/modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/sidebar";
-import { ExportMenu } from "@/components/export-menu";
+import { ProtectedPage } from "@/lib/auth-gate";
 import { formatDate } from "@/lib/utils";
+import {
+  deleteTrophyType, listQuestionTypes, listScores, listStudents,
+  listTrophyAllocations, listTrophyTypes, upsertTrophyAllocation, upsertTrophyType,
+} from "@/lib/data";
+import { buildLeaderboard } from "@/lib/ranking";
 import type {
-  Category,
-  LeaderboardRow,
-  TrophyAllocation,
-  TrophyType,
+  LeaderboardRow, QuestionType, Student, TrophyAllocation, TrophyType,
 } from "@/lib/types";
 
 type Tab = "preview" | "configure";
 
 export default function AwardsPage() {
-  const [tab, setTab] = useState<Tab>("preview");
-  const [trophies, setTrophies] = useState<TrophyType[] | null>(null);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [allocations, setAllocations] = useState<TrophyAllocation[]>([]);
-  const [rows, setRows] = useState<LeaderboardRow[] | null>(null);
+  return (
+    <ProtectedPage label="Awards">
+      <AwardsInner />
+    </ProtectedPage>
+  );
+}
+
+function AwardsInner() {
+  const [tab, setTab] = React.useState<Tab>("preview");
+  const [trophies, setTrophies] = React.useState<TrophyType[] | null>(null);
+  const [allocations, setAllocations] = React.useState<TrophyAllocation[]>([]);
+  const [students, setStudents] = React.useState<Student[]>([]);
+  const [questionTypes, setQuestionTypes] = React.useState<QuestionType[]>([]);
+  const [rows, setRows] = React.useState<LeaderboardRow[]>([]);
 
   async function load() {
-    const [t, c, a, r] = await Promise.all([
-      fetch("/api/trophy-types").then((r) => r.json()),
-      fetch("/api/categories").then((r) => r.json()),
-      fetch("/api/trophy-allocations").then((r) => r.json()),
-      fetch("/api/leaderboard?trophies=1").then((r) => r.json()),
-    ]);
-    setTrophies(t);
-    setCategories(c);
-    setAllocations(a);
-    setRows(r);
+    try {
+      const [t, a, s, qts, scores] = await Promise.all([
+        listTrophyTypes(),
+        listTrophyAllocations(),
+        listStudents(),
+        listQuestionTypes(),
+        listScores(),
+      ]);
+      setTrophies(t);
+      setAllocations(a);
+      setStudents(s);
+      setQuestionTypes(qts);
+      setRows(
+        buildLeaderboard({
+          students: s,
+          scores,
+          questionTypes: qts,
+          trophyTypes: t,
+          trophyAllocations: a,
+          applyTrophies: true,
+        })
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Failed to load awards");
+    }
   }
-  useEffect(() => {
+  React.useEffect(() => {
     load();
   }, []);
+
+  const categories = React.useMemo(
+    () => Array.from(new Set(students.map((s) => s.category ?? "(uncategorised)"))).sort(),
+    [students]
+  );
 
   return (
     <div>
       <PageHeader
         title="Awards"
-        description="Allocate trophies and preview winners. Tied positions are listed alphabetically by surname."
+        description="Allocate trophies and preview winners. Tied positions are listed alphabetically."
         actions={
           <>
-            <div className="hidden md:flex items-center bg-white border border-[#E8E3D7] rounded-md p-0.5">
+            <div className="flex items-center bg-white border border-[#E8E3D7] rounded-md p-0.5">
               {(["preview", "configure"] as Tab[]).map((t) => (
                 <button
                   key={t}
@@ -62,24 +95,12 @@ export default function AwardsPage() {
                 </button>
               ))}
             </div>
-            <ExportMenu surface="awards" imageSelector="[data-export-section]" trophiesApplied />
+            {tab === "preview" && (
+              <ExportAwardsButton rows={rows} />
+            )}
           </>
         }
       />
-
-      <div className="md:hidden mb-4 flex items-center bg-white border border-[#E8E3D7] rounded-md p-0.5 w-fit">
-        {(["preview", "configure"] as Tab[]).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
-              tab === t ? "bg-[#1B3A6B] text-white" : "text-[#4A4843]"
-            }`}
-          >
-            {t === "preview" ? "Preview" : "Configure"}
-          </button>
-        ))}
-      </div>
 
       {tab === "preview" ? (
         <PreviewSection rows={rows} />
@@ -90,6 +111,7 @@ export default function AwardsPage() {
             trophies={trophies ?? []}
             categories={categories}
             allocations={allocations}
+            students={students}
             reload={load}
           />
         </div>
@@ -98,13 +120,44 @@ export default function AwardsPage() {
   );
 }
 
-function PreviewSection({ rows }: { rows: LeaderboardRow[] | null }) {
-  const grouped = useMemo(() => {
-    if (!rows) return [] as { category: string; trophies: { trophy: TrophyType; rows: LeaderboardRow[] }[] }[];
+function ExportAwardsButton({ rows }: { rows: LeaderboardRow[] }) {
+  const [busy, setBusy] = React.useState(false);
+  async function run() {
+    setBusy(true);
+    try {
+      const { awardsToPdf } = await import("@/lib/pdf");
+      const buf = awardsToPdf(rows, {});
+      const blob = new Blob([buf], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const stamp = new Date().toISOString().slice(0, 10);
+      a.download = `tusgu-awards-${stamp}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Awards PDF generated");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Button variant="outline" onClick={run} disabled={busy}>
+      <FileText className="w-4 h-4" />
+      <span className="hidden sm:inline">{busy ? "Exporting…" : "Export PDF"}</span>
+    </Button>
+  );
+}
+
+function PreviewSection({ rows }: { rows: LeaderboardRow[] }) {
+  const grouped = React.useMemo(() => {
+    if (rows.length === 0) return [] as { category: string; trophies: { trophy: TrophyType; rows: LeaderboardRow[] }[] }[];
     const byCat = new Map<string, LeaderboardRow[]>();
     for (const r of rows) {
-      if (!byCat.has(r.student.category_name)) byCat.set(r.student.category_name, []);
-      byCat.get(r.student.category_name)!.push(r);
+      const cat = r.student.category ?? "(uncategorised)";
+      if (!byCat.has(cat)) byCat.set(cat, []);
+      byCat.get(cat)!.push(r);
     }
     return Array.from(byCat.entries())
       .sort((a, b) => a[0].localeCompare(b[0]))
@@ -119,29 +172,21 @@ function PreviewSection({ rows }: { rows: LeaderboardRow[] | null }) {
           .sort((a, b) => a.trophy.display_order - b.trophy.display_order)
           .map((g) => ({
             trophy: g.trophy,
-            rows: g.rows.slice().sort((a, b) => {
-              const ln = a.student.last_name.localeCompare(b.student.last_name);
-              return ln !== 0 ? ln : a.student.first_name.localeCompare(b.student.first_name);
-            }),
+            rows: g.rows.slice().sort((a, b) =>
+              (a.student.full_name || "").localeCompare(b.student.full_name || "")
+            ),
           }));
         return { category, trophies };
       });
   }, [rows]);
 
-  if (rows == null) {
-    return (
-      <div className="bg-white rounded-xl border border-[#E8E3D7]">
-        <TableSkeleton rows={6} cols={4} />
-      </div>
-    );
-  }
   if (grouped.length === 0 || grouped.every((g) => g.trophies.length === 0)) {
     return (
       <div className="bg-white rounded-xl border border-[#E8E3D7]">
         <EmptyState
           icon={Award}
           title="No award winners yet"
-          description="Configure trophy types and allocations, then save to see winners here."
+          description="Configure trophy quantities per category, then save."
         />
       </div>
     );
@@ -153,26 +198,27 @@ function PreviewSection({ rows }: { rows: LeaderboardRow[] | null }) {
           key={category}
           data-export-section
           data-export-name={category}
-          className="bg-white rounded-xl border border-[#E8E3D7] shadow-[0_1px_2px_0_rgba(31,30,27,0.03)] overflow-hidden"
+          className="bg-white rounded-xl border border-[#E8E3D7] shadow-sm overflow-hidden"
         >
-          <div className="px-7 py-5 border-b border-[#F0EDE5] flex items-baseline justify-between">
+          <div className="px-5 sm:px-7 py-5 border-b border-[#F0EDE5] flex flex-col sm:flex-row sm:items-baseline justify-between gap-2">
             <div>
               <div className="text-[10px] uppercase tracking-wider text-[#7A7770] mb-1">Category</div>
-              <h2 className="font-serif text-[22px] font-semibold text-[#1F1E1B] tracking-tight">{category}</h2>
+              <h2 className="font-serif text-lg sm:text-[22px] font-semibold text-[#1F1E1B] tracking-tight">{category}</h2>
             </div>
             <div className="text-[11px] text-[#7A7770]">
               {trophies.reduce((sum, g) => sum + g.rows.length, 0)} winners across {trophies.length} trophies
             </div>
           </div>
-          <div className="px-7 py-6 space-y-7">
-            {trophies.length === 0 && (
+          <div className="px-5 sm:px-7 py-6 space-y-7">
+            {trophies.length === 0 ? (
               <div className="text-[13px] text-[#7A7770] italic">
                 No trophies allocated for this category. Use Configure to set quantities.
               </div>
+            ) : (
+              trophies.map(({ trophy, rows: winners }) => (
+                <TrophyBand key={trophy.id} trophy={trophy} rows={winners} />
+              ))
             )}
-            {trophies.map(({ trophy, rows: winners }) => (
-              <TrophyBand key={trophy.id} trophy={trophy} rows={winners} />
-            ))}
           </div>
         </div>
       ))}
@@ -191,10 +237,8 @@ function TrophyBand({ trophy, rows }: { trophy: TrophyType; rows: LeaderboardRow
       : "from-[#F4F1E8] to-[#EBE6D2] border-[#E5DECF] text-[#1B3A6B]";
   return (
     <section>
-      <header className={`flex items-baseline gap-3 pb-3 mb-4 border-b border-[#F0EDE5]`}>
-        <span
-          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11.5px] font-semibold border bg-gradient-to-b ${palette}`}
-        >
+      <header className="flex items-baseline gap-3 pb-3 mb-4 border-b border-[#F0EDE5] flex-wrap">
+        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11.5px] font-semibold border bg-gradient-to-b ${palette}`}>
           {trophy.icon && <span>{trophy.icon}</span>}
           {trophy.name}
         </span>
@@ -204,17 +248,12 @@ function TrophyBand({ trophy, rows }: { trophy: TrophyType; rows: LeaderboardRow
       </header>
       <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
         {rows.map((r) => (
-          <li
-            key={r.student.id}
-            className="flex items-baseline justify-between gap-3 py-1.5 border-b border-[#F0EDE5] last:border-b-0"
-          >
-            <div>
-              <div className="text-[14px] text-[#1F1E1B]">
-                {r.student.first_name}{" "}
-                <span className="font-semibold">{r.student.last_name}</span>
-              </div>
-              <div className="text-[11px] text-[#7A7770] mt-0.5">
-                {r.student.centre} · {r.student.teacher} · DOB {formatDate(r.student.dob)}
+          <li key={r.student.id} className="flex items-baseline justify-between gap-3 py-1.5 border-b border-[#F0EDE5] last:border-b-0">
+            <div className="min-w-0">
+              <div className="text-[14px] text-[#1F1E1B] font-semibold truncate">{r.student.full_name}</div>
+              <div className="text-[11px] text-[#7A7770] mt-0.5 truncate">
+                {[r.student.centre, r.student.teacher, r.student.dob ? `DOB ${formatDate(r.student.dob)}` : null]
+                  .filter(Boolean).join(" · ")}
               </div>
             </div>
             <div className="text-[13px] text-[#1F1E1B] font-semibold tabular-nums shrink-0">{r.totalScore}</div>
@@ -225,143 +264,69 @@ function TrophyBand({ trophy, rows }: { trophy: TrophyType; rows: LeaderboardRow
   );
 }
 
-/* ── Configure tab ─────────────────────────────────────────────── */
-
 function TrophyTypesCard({ trophies, reload }: { trophies: TrophyType[] | null; reload: () => void }) {
-  const [editOpen, setEditOpen] = useState(false);
-  const [editing, setEditing] = useState<TrophyType | null>(null);
-  const [confirmDel, setConfirmDel] = useState<TrophyType | null>(null);
-  const [order, setOrder] = useState<TrophyType[]>([]);
-  const [dirty, setDirty] = useState(false);
+  const [editOpen, setEditOpen] = React.useState(false);
+  const [editing, setEditing] = React.useState<TrophyType | null>(null);
+  const [confirmDel, setConfirmDel] = React.useState<TrophyType | null>(null);
 
-  useEffect(() => {
-    if (trophies) {
-      setOrder(trophies);
-      setDirty(false);
-    }
-  }, [trophies]);
-
-  function move(idx: number, dir: -1 | 1) {
-    const next = [...order];
-    const t = idx + dir;
-    if (t < 0 || t >= next.length) return;
-    [next[idx], next[t]] = [next[t], next[idx]];
-    setOrder(next);
-    setDirty(true);
-  }
-
-  async function saveOrder() {
-    const r = await fetch("/api/trophy-types/reorder", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ order: order.map((o) => o.id) }),
-    });
-    if (!r.ok) return toast.error("Reorder failed");
-    toast.success("Order saved");
-    setDirty(false);
-    reload();
-  }
-
-  async function save(name: string, icon: string, description: string) {
+  async function save(name: string, icon: string, description: string, displayOrder: number) {
     if (!name.trim()) return toast.error("Name is required");
-    const url = editing ? `/api/trophy-types/${editing.id}` : "/api/trophy-types";
-    const r = await fetch(url, {
-      method: editing ? "PUT" : "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    try {
+      await upsertTrophyType({
+        id: editing?.id,
         name: name.trim(),
         icon: icon.trim() || null,
         description: description.trim() || null,
-      }),
-    });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) return toast.error(d.error || "Save failed");
-    toast.success(editing ? "Trophy updated" : "Trophy added");
-    setEditOpen(false);
-    setEditing(null);
-    reload();
+        display_order: displayOrder,
+      });
+      toast.success(editing ? "Trophy updated" : "Trophy added");
+      setEditOpen(false);
+      setEditing(null);
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Save failed");
+    }
   }
 
   async function doDelete(t: TrophyType) {
-    const r = await fetch(`/api/trophy-types/${t.id}`, { method: "DELETE" });
-    if (!r.ok) return toast.error("Delete failed");
-    toast.success("Trophy deleted");
-    reload();
+    try {
+      await deleteTrophyType(t.id);
+      toast.success("Trophy deleted");
+      reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Delete failed");
+    }
   }
 
   return (
-    <div className="bg-white rounded-xl border border-[#E8E3D7] shadow-[0_1px_2px_0_rgba(31,30,27,0.03)] overflow-hidden">
+    <div className="bg-white rounded-xl border border-[#E8E3D7] shadow-sm overflow-hidden">
       <div className="px-5 py-4 border-b border-[#F0EDE5] flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Award className="w-[15px] h-[15px] text-[#7A7770]" strokeWidth={1.75} />
           <h2 className="text-[13px] font-semibold text-[#1F1E1B]">Trophy Types</h2>
         </div>
-        <div className="flex gap-2">
-          {dirty && (
-            <Button size="sm" variant="secondary" onClick={saveOrder}>
-              <Save className="w-3.5 h-3.5" />
-              Save Order
-            </Button>
-          )}
-          <Button
-            size="sm"
-            onClick={() => {
-              setEditing(null);
-              setEditOpen(true);
-            }}
-          >
-            <Plus className="w-4 h-4" />
-            Add
-          </Button>
-        </div>
+        <Button size="sm" onClick={() => { setEditing(null); setEditOpen(true); }}>
+          <Plus className="w-4 h-4" /> Add
+        </Button>
       </div>
 
       {trophies == null ? (
         <TableSkeleton rows={4} cols={3} />
       ) : trophies.length === 0 ? (
-        <EmptyState icon={Award} title="No trophy types" description="Add at least one trophy type to allocate awards." />
+        <EmptyState icon={Award} title="No trophy types" description="Add at least one trophy type." />
       ) : (
         <ul>
-          {order.map((t, i) => (
-            <li
-              key={t.id}
-              className="flex items-center gap-3 px-5 py-3 border-b border-[#F0EDE5] last:border-b-0"
-            >
-              <div className="flex flex-col">
-                <button
-                  className="text-[#A8A39B] hover:text-[#1F1E1B] disabled:opacity-30 leading-none text-[10px]"
-                  onClick={() => move(i, -1)}
-                  disabled={i === 0}
-                  title="Move up"
-                >
-                  ▲
-                </button>
-                <button
-                  className="text-[#A8A39B] hover:text-[#1F1E1B] disabled:opacity-30 leading-none text-[10px]"
-                  onClick={() => move(i, 1)}
-                  disabled={i === order.length - 1}
-                  title="Move down"
-                >
-                  ▼
-                </button>
-              </div>
-              <GripVertical className="w-3.5 h-3.5 text-[#A8A39B]" />
+          {trophies.map((t, i) => (
+            <li key={t.id} className="flex items-center gap-3 px-5 py-3 border-b border-[#F0EDE5] last:border-b-0">
+              <span className="text-[11px] text-[#A8A39B] tabular-nums w-6">#{i + 1}</span>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   {t.icon && <span className="text-base">{t.icon}</span>}
-                  <span className="text-[13.5px] font-medium text-[#1F1E1B]">{t.name}</span>
-                  <span className="text-[11px] text-[#A8A39B]">#{i + 1}</span>
+                  <span className="text-[13.5px] font-medium text-[#1F1E1B] truncate">{t.name}</span>
                 </div>
                 {t.description && <div className="text-[11.5px] text-[#7A7770] truncate">{t.description}</div>}
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setEditing(t);
-                  setEditOpen(true);
-                }}
-              >
+              <Button variant="ghost" size="sm" onClick={() => { setEditing(t); setEditOpen(true); }}>
                 <Pencil className="w-3.5 h-3.5" />
               </Button>
               <Button variant="ghost" size="sm" onClick={() => setConfirmDel(t)}>
@@ -374,11 +339,9 @@ function TrophyTypesCard({ trophies, reload }: { trophies: TrophyType[] | null; 
 
       <TrophyModal
         open={editOpen}
-        onClose={() => {
-          setEditOpen(false);
-          setEditing(null);
-        }}
+        onClose={() => { setEditOpen(false); setEditing(null); }}
         editing={editing}
+        defaultOrder={trophies ? trophies.length + 1 : 1}
         onSave={save}
       />
       <ConfirmDialog
@@ -386,7 +349,7 @@ function TrophyTypesCard({ trophies, reload }: { trophies: TrophyType[] | null; 
         onClose={() => setConfirmDel(null)}
         onConfirm={() => confirmDel && doDelete(confirmDel)}
         title="Delete trophy?"
-        message={`This will delete "${confirmDel?.name}" and any allocations using it.`}
+        message={`Delete "${confirmDel?.name}" and any allocations using it.`}
         confirmLabel="Delete"
         destructive
       />
@@ -395,25 +358,25 @@ function TrophyTypesCard({ trophies, reload }: { trophies: TrophyType[] | null; 
 }
 
 function TrophyModal({
-  open,
-  onClose,
-  editing,
-  onSave,
+  open, onClose, editing, defaultOrder, onSave,
 }: {
   open: boolean;
   onClose: () => void;
   editing: TrophyType | null;
-  onSave: (name: string, icon: string, description: string) => Promise<unknown>;
+  defaultOrder: number;
+  onSave: (name: string, icon: string, description: string, displayOrder: number) => Promise<unknown>;
 }) {
-  const [name, setName] = useState("");
-  const [icon, setIcon] = useState("");
-  const [desc, setDesc] = useState("");
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
+  const [name, setName] = React.useState("");
+  const [icon, setIcon] = React.useState("");
+  const [desc, setDesc] = React.useState("");
+  const [order, setOrder] = React.useState(1);
+  const [busy, setBusy] = React.useState(false);
+  React.useEffect(() => {
     setName(editing?.name ?? "");
     setIcon(editing?.icon ?? "");
     setDesc(editing?.description ?? "");
-  }, [editing, open]);
+    setOrder(editing?.display_order ?? defaultOrder);
+  }, [editing, open, defaultOrder]);
   return (
     <Modal
       open={open}
@@ -421,17 +384,12 @@ function TrophyModal({
       title={editing ? "Edit Trophy Type" : "Add Trophy Type"}
       footer={
         <>
-          <Button variant="outline" onClick={onClose} disabled={busy}>
-            Cancel
-          </Button>
+          <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
           <Button
             onClick={async () => {
               setBusy(true);
-              try {
-                await onSave(name, icon, desc);
-              } finally {
-                setBusy(false);
-              }
+              try { await onSave(name, icon, desc, order); }
+              finally { setBusy(false); }
             }}
             disabled={busy}
           >
@@ -443,14 +401,20 @@ function TrophyModal({
       <div className="space-y-3">
         <div>
           <Label>Name *</Label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Gold Trophy" />
+          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Grand Champion" />
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <Label>Icon (emoji)</Label>
+            <Input value={icon} onChange={(e) => setIcon(e.target.value)} placeholder="🏆" maxLength={4} />
+          </div>
+          <div>
+            <Label>Order</Label>
+            <Input type="number" value={order} onChange={(e) => setOrder(parseInt(e.target.value || "0", 10) || 1)} />
+          </div>
         </div>
         <div>
-          <Label>Icon (emoji, optional)</Label>
-          <Input value={icon} onChange={(e) => setIcon(e.target.value)} placeholder="🥇" maxLength={4} />
-        </div>
-        <div>
-          <Label>Description (optional)</Label>
+          <Label>Description</Label>
           <Input value={desc} onChange={(e) => setDesc(e.target.value)} />
         </div>
       </div>
@@ -459,41 +423,41 @@ function TrophyModal({
 }
 
 function AllocationsCard({
-  trophies,
-  categories,
-  allocations,
-  reload,
+  trophies, categories, allocations, students, reload,
 }: {
   trophies: TrophyType[];
-  categories: Category[];
+  categories: string[];
   allocations: TrophyAllocation[];
+  students: Student[];
   reload: () => void;
 }) {
-  const [activeCat, setActiveCat] = useState<number | null>(null);
-  const [draft, setDraft] = useState<Record<string, number>>({});
-  const [busy, setBusy] = useState(false);
+  const [activeCat, setActiveCat] = React.useState<string | null>(null);
+  const [draft, setDraft] = React.useState<Record<string, number>>({});
+  const [busy, setBusy] = React.useState(false);
 
-  useEffect(() => {
-    if (categories.length && activeCat == null) setActiveCat(categories[0].id);
+  React.useEffect(() => {
+    if (categories.length && (activeCat == null || !categories.includes(activeCat))) {
+      setActiveCat(categories[0]);
+    }
   }, [categories, activeCat]);
 
-  useEffect(() => {
+  React.useEffect(() => {
     const d: Record<string, number> = {};
-    for (const a of allocations) d[`${a.category_id}-${a.trophy_type_id}`] = a.quantity;
+    for (const a of allocations) d[`${a.category}-${a.trophy_type_id}`] = a.quantity;
     setDraft(d);
   }, [allocations]);
 
-  function setQty(catId: number, ttId: number, qty: number) {
-    setDraft((d) => ({ ...d, [`${catId}-${ttId}`]: Math.max(0, qty) }));
+  function setQty(cat: string, ttId: number, qty: number) {
+    setDraft((d) => ({ ...d, [`${cat}-${ttId}`]: Math.max(0, qty) }));
   }
 
   function applyToAll() {
-    if (activeCat == null) return;
+    if (!activeCat) return;
     const next = { ...draft };
     for (const c of categories) {
       for (const t of trophies) {
         const v = draft[`${activeCat}-${t.id}`] ?? 0;
-        next[`${c.id}-${t.id}`] = v;
+        next[`${c}-${t.id}`] = v;
       }
     }
     setDraft(next);
@@ -503,24 +467,16 @@ function AllocationsCard({
   async function save() {
     setBusy(true);
     try {
-      const items: { trophy_type_id: number; category_id: number; quantity: number }[] = [];
       for (const c of categories) {
         for (const t of trophies) {
-          items.push({
-            trophy_type_id: t.id,
-            category_id: c.id,
-            quantity: draft[`${c.id}-${t.id}`] ?? 0,
-          });
+          const qty = draft[`${c}-${t.id}`] ?? 0;
+          await upsertTrophyAllocation(t.id, c, qty);
         }
       }
-      const r = await fetch("/api/trophy-allocations", {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ items }),
-      });
-      if (!r.ok) return toast.error("Save failed");
       toast.success("Allocations saved");
       reload();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Save failed");
     } finally {
       setBusy(false);
     }
@@ -529,7 +485,7 @@ function AllocationsCard({
   if (categories.length === 0) {
     return (
       <div className="bg-white rounded-xl border border-[#E8E3D7]">
-        <EmptyState icon={Settings} title="No categories yet" description="Create categories in Setup before allocating trophies." />
+        <EmptyState icon={Settings} title="No categories yet" description="Import students with categories first." />
       </div>
     );
   }
@@ -541,8 +497,16 @@ function AllocationsCard({
     );
   }
 
+  const studentsInCat = activeCat
+    ? students.filter((s) => (s.category ?? "(uncategorised)") === activeCat).length
+    : 0;
+  const totalAllocated = activeCat
+    ? trophies.reduce((sum, t) => sum + (draft[`${activeCat}-${t.id}`] ?? 0), 0)
+    : 0;
+  const overAllocated = totalAllocated > studentsInCat && studentsInCat > 0;
+
   return (
-    <div className="bg-white rounded-xl border border-[#E8E3D7] shadow-[0_1px_2px_0_rgba(31,30,27,0.03)] overflow-hidden">
+    <div className="bg-white rounded-xl border border-[#E8E3D7] shadow-sm overflow-hidden">
       <div className="px-5 py-4 border-b border-[#F0EDE5] flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Users className="w-[15px] h-[15px] text-[#7A7770]" strokeWidth={1.75} />
@@ -551,7 +515,7 @@ function AllocationsCard({
         <div className="flex gap-2">
           <Button size="sm" variant="outline" onClick={applyToAll}>
             <Copy className="w-3.5 h-3.5" />
-            Apply to all
+            <span className="hidden sm:inline">Apply to all</span>
           </Button>
           <Button size="sm" onClick={save} disabled={busy}>
             <Save className="w-3.5 h-3.5" />
@@ -560,120 +524,51 @@ function AllocationsCard({
         </div>
       </div>
 
-      <div className="px-5 py-3 border-b border-[#F0EDE5] flex flex-wrap gap-1.5 bg-[#FAF9F5]">
+      <div className="px-4 sm:px-5 py-3 border-b border-[#F0EDE5] flex flex-wrap gap-1.5 bg-[#FAF9F5] max-h-32 overflow-y-auto">
         {categories.map((c) => (
           <button
-            key={c.id}
-            onClick={() => setActiveCat(c.id)}
+            key={c}
+            onClick={() => setActiveCat(c)}
             className={`px-3 py-1.5 rounded-md text-[12px] font-medium transition-colors ${
-              activeCat === c.id
+              activeCat === c
                 ? "bg-[#1B3A6B] text-white"
                 : "bg-white text-[#1F1E1B] border border-[#E8E3D7] hover:border-[#D9D2BE]"
             }`}
           >
-            {c.name}
+            {c}
           </button>
         ))}
       </div>
 
       {activeCat != null && (
-        <CategoryAllocation
-          categoryId={activeCat}
-          categoryName={categories.find((c) => c.id === activeCat)?.name ?? ""}
-          trophies={trophies}
-          draft={draft}
-          setQty={setQty}
-        />
-      )}
-    </div>
-  );
-}
-
-function CategoryAllocation({
-  categoryId,
-  categoryName,
-  trophies,
-  draft,
-  setQty,
-}: {
-  categoryId: number;
-  categoryName: string;
-  trophies: TrophyType[];
-  draft: Record<string, number>;
-  setQty: (catId: number, ttId: number, qty: number) => void;
-}) {
-  const [preview, setPreview] = useState<{
-    rows: { student: { first_name: string; last_name: string }; totalScore: number; trophy: TrophyType | null }[];
-  } | null>(null);
-
-  useEffect(() => {
-    fetch(`/api/trophy-allocations/preview?category_id=${categoryId}`)
-      .then((r) => r.json())
-      .then(setPreview);
-  }, [categoryId]);
-
-  const totalAllocated = trophies.reduce((sum, t) => sum + (draft[`${categoryId}-${t.id}`] ?? 0), 0);
-  const studentCount = preview?.rows.length ?? 0;
-  const overAllocated = totalAllocated > studentCount && studentCount > 0;
-
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-[#F0EDE5]">
-      <div className="p-5 space-y-3">
-        <div className="text-[10px] uppercase tracking-wider text-[#7A7770]">{categoryName} — quantities</div>
-        {trophies.map((t) => (
-          <div key={t.id} className="flex items-center gap-3">
-            <div className="flex-1 flex items-center gap-2 min-w-0">
-              {t.icon && <span>{t.icon}</span>}
-              <span className="text-[13px] text-[#1F1E1B] truncate">{t.name}</span>
+        <div className="p-5 space-y-3">
+          <div className="text-[10px] uppercase tracking-wider text-[#7A7770]">{activeCat} — quantities</div>
+          {trophies.map((t) => (
+            <div key={t.id} className="flex items-center gap-3">
+              <div className="flex-1 flex items-center gap-2 min-w-0">
+                {t.icon && <span>{t.icon}</span>}
+                <span className="text-[13px] text-[#1F1E1B] truncate">{t.name}</span>
+              </div>
+              <Input
+                type="number"
+                min={0}
+                value={draft[`${activeCat}-${t.id}`] ?? 0}
+                onChange={(e) => setQty(activeCat, t.id, parseInt(e.target.value || "0", 10))}
+                className="w-20 text-center"
+              />
             </div>
-            <Input
-              type="number"
-              min={0}
-              value={draft[`${categoryId}-${t.id}`] ?? 0}
-              onChange={(e) => setQty(categoryId, t.id, parseInt(e.target.value || "0", 10))}
-              className="w-20 text-center"
-            />
+          ))}
+          <div
+            className={`text-[11.5px] px-3 py-2 rounded ${
+              overAllocated
+                ? "bg-[#FAF1E5] border border-[#F0DEB8] text-[#B8651A]"
+                : "bg-[#FAF9F5] border border-[#E8E3D7] text-[#7A7770]"
+            }`}
+          >
+            {totalAllocated} of {studentsInCat} students will receive a trophy{overAllocated ? " — over-allocated" : ""}.
           </div>
-        ))}
-        <div
-          className={`text-[11.5px] px-3 py-2 rounded ${
-            overAllocated
-              ? "bg-[#FAF1E5] border border-[#F0DEB8] text-[#B8651A]"
-              : "bg-[#FAF9F5] border border-[#E8E3D7] text-[#7A7770]"
-          }`}
-        >
-          {totalAllocated} of {studentCount} students will receive a trophy{overAllocated ? " — over-allocated" : ""}.
         </div>
-      </div>
-      <div className="p-5">
-        <div className="flex items-center gap-2 mb-3 text-[10px] uppercase tracking-wider text-[#7A7770]">
-          <Eye className="w-3.5 h-3.5" /> Preview (saved allocations)
-        </div>
-        <div className="max-h-72 overflow-y-auto border border-[#F0EDE5] rounded">
-          {preview == null ? (
-            <div className="p-4 text-[13px] text-[#7A7770]">Loading…</div>
-          ) : preview.rows.length === 0 ? (
-            <div className="p-4 text-[13px] text-[#7A7770]">No students in this category</div>
-          ) : (
-            <ul>
-              {preview.rows.map((r, i) => (
-                <li
-                  key={i}
-                  className="flex items-center gap-2 px-3 py-2 border-b border-[#F0EDE5] last:border-b-0 text-[13px]"
-                >
-                  <span className="text-[11px] text-[#A8A39B] w-6 tabular-nums">{i + 1}.</span>
-                  <span className="flex-1 truncate text-[#1F1E1B]">
-                    {r.student.first_name} {r.student.last_name}
-                  </span>
-                  <span className="text-[11px] text-[#7A7770] tabular-nums">{r.totalScore}</span>
-                  {r.trophy ? <span className="text-[12px]">{r.trophy.icon ?? "🏅"}</span> : <span className="text-[#A8A39B]">—</span>}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        <div className="text-[11px] text-[#A8A39B] mt-2">Save to refresh the preview.</div>
-      </div>
+      )}
     </div>
   );
 }

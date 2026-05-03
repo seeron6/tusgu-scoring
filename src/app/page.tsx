@@ -1,8 +1,11 @@
-import { redirect } from "next/navigation";
-import { getCurrentSession } from "@/lib/auth";
+"use client";
+import { useEffect } from "react";
+import { useRouter } from "next/navigation";
 
-export default async function Home() {
-  const session = await getCurrentSession();
-  if (!session) redirect("/login");
-  redirect("/setup");
+export default function Home() {
+  const router = useRouter();
+  useEffect(() => {
+    router.replace("/students");
+  }, [router]);
+  return null;
 }

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter, Source_Serif_4 } from "next/font/google";
 import { Toaster } from "react-hot-toast";
 import "./globals.css";
+import { AuthProvider } from "@/lib/auth-gate";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -17,18 +18,15 @@ const sourceSerif = Source_Serif_4({
 });
 
 export const metadata: Metadata = {
-  title: "TUSGU Scoring — Internal Competition Portal",
-  description: "TUSGU Educational Services internal competition score management",
-  icons: { icon: "/favicon.ico" },
+  title: "TUSGU Scoring — Competition Portal",
+  description: "TUSGU Educational Services competition score management",
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{ children: React.ReactNode }>) {
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" className={`${inter.variable} ${sourceSerif.variable} h-full antialiased`}>
       <body className="min-h-full">
-        {children}
+        <AuthProvider>{children}</AuthProvider>
         <Toaster
           position="bottom-right"
           gutter={8}

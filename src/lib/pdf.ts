@@ -23,7 +23,7 @@ function header(doc: jsPDF, title: string, subtitle?: string) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   doc.setTextColor(...MUTED);
-  doc.text("Educational Services — Internal Competition Portal", 80, 50);
+  doc.text("Educational Services — Competition Portal", 80, 50);
 
   doc.setTextColor(...TEXT);
   doc.setFont("helvetica", "bold");
@@ -62,11 +62,11 @@ export function leaderboardToPdf(
   const showScores = !opts.hideScores;
   header(doc, opts.title ?? "Leaderboard", opts.subtitle);
 
-  // Group by category
   const byCat = new Map<string, LeaderboardRow[]>();
   for (const r of rows) {
-    if (!byCat.has(r.student.category_name)) byCat.set(r.student.category_name, []);
-    byCat.get(r.student.category_name)!.push(r);
+    const cat = r.student.category ?? "(uncategorised)";
+    if (!byCat.has(cat)) byCat.set(cat, []);
+    byCat.get(cat)!.push(r);
   }
   const cats = Array.from(byCat.entries()).sort((a, b) => a[0].localeCompare(b[0]));
 
@@ -79,7 +79,7 @@ export function leaderboardToPdf(
     doc.setFontSize(11);
     doc.setFont("helvetica", "bold");
     doc.setTextColor(...NAVY);
-    doc.text(`${cat}`, 40, y);
+    doc.text(cat, 40, y);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(9);
     doc.setTextColor(...MUTED);
@@ -96,11 +96,11 @@ export function leaderboardToPdf(
     const body = list.map((r) => {
       const arr: (string | number)[] = [
         r.rank,
-        `${r.student.first_name} ${r.student.last_name}`,
-        r.student.dob,
-        r.age,
-        r.student.centre,
-        r.student.teacher,
+        r.student.full_name,
+        r.student.dob ?? "",
+        r.age ?? "",
+        r.student.centre ?? "",
+        r.student.teacher ?? "",
       ];
       if (showScores) {
         for (const qt of questionTypes) arr.push(r.scoresByType[qt.id] ?? 0);
@@ -123,17 +123,9 @@ export function leaderboardToPdf(
         lineColor: BORDER,
         lineWidth: 0.4,
       },
-      headStyles: {
-        fillColor: BG_ALT,
-        textColor: MUTED,
-        fontStyle: "bold",
-        fontSize: 7.5,
-      },
+      headStyles: { fillColor: BG_ALT, textColor: MUTED, fontStyle: "bold", fontSize: 7.5 },
       alternateRowStyles: { fillColor: [255, 255, 255] },
       columnStyles: { 0: { cellWidth: 24, halign: "center", fontStyle: "bold" } },
-      didDrawPage: () => {
-        // header on each page
-      },
     });
     // @ts-expect-error autoTable adds lastAutoTable to the doc
     y = (doc.lastAutoTable?.finalY ?? y) + 30;
@@ -143,20 +135,20 @@ export function leaderboardToPdf(
   return doc.output("arraybuffer") as ArrayBuffer;
 }
 
-/**
- * Awards PDF — one section per category, each section has trophy bands with
- * winners listed alphabetically (last name, first name).
- */
 export function awardsToPdf(rows: LeaderboardRow[], opts: PdfOptions = {}): ArrayBuffer {
   const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
   const showScores = !opts.hideScores;
-  header(doc, opts.title ?? "Awards & Trophies", opts.subtitle ?? "Winners are listed alphabetically within each award.");
+  header(
+    doc,
+    opts.title ?? "Awards & Trophies",
+    opts.subtitle ?? "Winners are listed alphabetically within each award."
+  );
 
-  // Group by category, then by trophy
   const byCat = new Map<string, LeaderboardRow[]>();
   for (const r of rows) {
-    if (!byCat.has(r.student.category_name)) byCat.set(r.student.category_name, []);
-    byCat.get(r.student.category_name)!.push(r);
+    const cat = r.student.category ?? "(uncategorised)";
+    if (!byCat.has(cat)) byCat.set(cat, []);
+    byCat.get(cat)!.push(r);
   }
   const cats = Array.from(byCat.entries()).sort((a, b) => a[0].localeCompare(b[0]));
 
@@ -169,7 +161,6 @@ export function awardsToPdf(rows: LeaderboardRow[], opts: PdfOptions = {}): Arra
       doc.addPage();
       y = 50;
     }
-    // Category banner
     doc.setFillColor(...NAVY);
     doc.rect(40, y, pageW - 80, 26, "F");
     doc.setFont("helvetica", "bold");
@@ -187,7 +178,6 @@ export function awardsToPdf(rows: LeaderboardRow[], opts: PdfOptions = {}): Arra
         doc.addPage();
         y = 50;
       }
-      // Trophy header line
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10.5);
       doc.setTextColor(...NAVY);
@@ -196,7 +186,12 @@ export function awardsToPdf(rows: LeaderboardRow[], opts: PdfOptions = {}): Arra
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9);
       doc.setTextColor(...MUTED);
-      doc.text(`${g.rows.length} recipient${g.rows.length === 1 ? "" : "s"}`, pageW - 50, y, { align: "right" });
+      doc.text(
+        `${g.rows.length} recipient${g.rows.length === 1 ? "" : "s"}`,
+        pageW - 50,
+        y,
+        { align: "right" }
+      );
       y += 8;
 
       const head = showScores
@@ -204,10 +199,10 @@ export function awardsToPdf(rows: LeaderboardRow[], opts: PdfOptions = {}): Arra
         : [["Name", "DOB", "Centre", "Teacher"]];
       const body = g.rows.map((r) => {
         const base = [
-          `${r.student.first_name} ${r.student.last_name}`,
-          r.student.dob,
-          r.student.centre,
-          r.student.teacher,
+          r.student.full_name,
+          r.student.dob ?? "",
+          r.student.centre ?? "",
+          r.student.teacher ?? "",
         ];
         return showScores ? [...base, String(r.totalScore)] : base;
       });

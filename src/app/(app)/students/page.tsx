@@ -1,6 +1,8 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Pencil, Trash2, Upload, Users, Search, Download } from "lucide-react";
+import * as React from "react";
+import {
+  Plus, Pencil, Trash2, Upload, Users, Search, Download, ScanLine, Camera,
+} from "lucide-react";
 import toast from "react-hot-toast";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Select } from "@/components/ui/input";
@@ -8,39 +10,95 @@ import { Modal, ConfirmDialog } from "@/components/ui/modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/sidebar";
+import { BarcodeScannerModal } from "@/components/barcode-scanner";
 import { calculateAge, formatDate } from "@/lib/utils";
-import type { Category, StudentWithCategory } from "@/lib/types";
-import { STUDENT_FIELDS, type StudentField } from "@/lib/excel-types";
+import { SUPABASE_CONFIGURED } from "@/lib/supabase";
+import { useAuth, PasswordModal } from "@/lib/auth-gate";
+import {
+  bulkInsertStudents, deleteStudent, listStudents, updateStudent, upsertStudent,
+} from "@/lib/data";
+import type { Student, StudentInsert } from "@/lib/types";
+import {
+  autoMapColumns, downloadWorkbook, parseWorkbook, previewStudentImport,
+  STUDENT_FIELDS, studentsToWorkbook, type ParsedRow, type StudentField,
+} from "@/lib/excel";
+import { STUDENT_FIELD_LABELS } from "@/lib/excel-types";
+
+// Columns the table will display IF the data has at least one non-null value.
+const TABLE_COLUMNS: { key: keyof Student; label: string; render?: (s: Student) => React.ReactNode }[] = [
+  { key: "student_code", label: "Student Code" },
+  { key: "exam_code", label: "Exam Code" },
+  { key: "full_name", label: "Name", render: (s) => <span className="font-medium">{s.full_name}</span> },
+  { key: "dob", label: "DOB", render: (s) => <span className="text-[#7A7770]">{formatDate(s.dob)}</span> },
+  { key: "category", label: "Category", render: (s) => s.category ? <CategoryChip value={s.category} /> : null },
+  { key: "level", label: "Level" },
+  { key: "centre", label: "Centre" },
+  { key: "teacher", label: "Teacher" },
+  { key: "listening_category", label: "Listening" },
+  { key: "tshirt_size", label: "T-Shirt" },
+  { key: "phone", label: "Phone" },
+];
 
 export default function StudentsPage() {
-  const [students, setStudents] = useState<StudentWithCategory[] | null>(null);
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [search, setSearch] = useState("");
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(25);
-  const [editOpen, setEditOpen] = useState(false);
-  const [editing, setEditing] = useState<StudentWithCategory | null>(null);
-  const [importOpen, setImportOpen] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState<StudentWithCategory | null>(null);
+  const [students, setStudents] = React.useState<Student[] | null>(null);
+  const [search, setSearch] = React.useState("");
+  const [page, setPage] = React.useState(1);
+  const [pageSize, setPageSize] = React.useState(25);
+  const [editing, setEditing] = React.useState<Student | null>(null);
+  const [editOpen, setEditOpen] = React.useState(false);
+  const [importOpen, setImportOpen] = React.useState(false);
+  const [confirmDelete, setConfirmDelete] = React.useState<Student | null>(null);
+  const [scannerOpen, setScannerOpen] = React.useState(false);
+  const [pendingAction, setPendingAction] = React.useState<null | (() => void)>(null);
+  const { unlocked } = useAuth();
 
   async function load() {
-    const [s, c] = await Promise.all([
-      fetch("/api/students").then((r) => r.json()),
-      fetch("/api/categories").then((r) => r.json()),
-    ]);
-    setStudents(s);
-    setCategories(c);
+    if (!SUPABASE_CONFIGURED) {
+      setStudents([]);
+      return;
+    }
+    try {
+      const data = await listStudents();
+      setStudents(data);
+    } catch (e) {
+      toast.error(asMsg(e, "Failed to load students"));
+      setStudents([]);
+    }
   }
-  useEffect(() => {
+  React.useEffect(() => {
     load();
   }, []);
 
-  const filtered = useMemo(() => {
+  const visibleColumns = React.useMemo(() => {
+    if (!students || students.length === 0) {
+      // Show a sensible default until we have data so the table doesn't look empty.
+      return TABLE_COLUMNS.filter((c) => ["full_name", "dob", "category", "centre", "teacher"].includes(c.key as string));
+    }
+    return TABLE_COLUMNS.filter((c) =>
+      students.some((s) => {
+        const v = s[c.key];
+        return v != null && v !== "";
+      })
+    );
+  }, [students]);
+
+  const filtered = React.useMemo(() => {
     if (!students) return [];
     const q = search.trim().toLowerCase();
     if (!q) return students;
     return students.filter((s) =>
-      [s.first_name, s.last_name, s.centre, s.teacher, s.category_name]
+      [
+        s.full_name,
+        s.student_code,
+        s.exam_code,
+        s.barcode,
+        s.category,
+        s.centre,
+        s.teacher,
+        s.email,
+        s.phone,
+      ]
+        .filter(Boolean)
         .join(" ")
         .toLowerCase()
         .includes(q)
@@ -48,103 +106,152 @@ export default function StudentsPage() {
   }, [students, search]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const paged = useMemo(() => filtered.slice((page - 1) * pageSize, page * pageSize), [filtered, page, pageSize]);
+  const paged = React.useMemo(
+    () => filtered.slice((page - 1) * pageSize, page * pageSize),
+    [filtered, page, pageSize]
+  );
 
-  useEffect(() => {
+  React.useEffect(() => {
     if (page > totalPages) setPage(1);
   }, [page, totalPages]);
 
-  async function save(payload: Omit<StudentWithCategory, "id" | "category_name" | "created_at">) {
-    const url = editing ? `/api/students/${editing.id}` : "/api/students";
-    const method = editing ? "PUT" : "POST";
-    const r = await fetch(url, {
-      method,
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (!r.ok) return toast.error(data.error || "Save failed");
-    toast.success(editing ? "Student updated" : "Student added");
-    setEditOpen(false);
-    setEditing(null);
-    load();
+  function gateThen(action: () => void) {
+    if (unlocked) {
+      action();
+    } else {
+      setPendingAction(() => action);
+    }
   }
 
-  async function doDelete(s: StudentWithCategory) {
-    const r = await fetch(`/api/students/${s.id}`, { method: "DELETE" });
-    if (!r.ok) return toast.error("Delete failed");
-    toast.success("Student deleted");
-    load();
+  async function save(payload: Partial<StudentInsert>) {
+    try {
+      if (editing) {
+        await updateStudent(editing.id, payload);
+        toast.success("Student updated");
+      } else {
+        await upsertStudent({
+          student_code: null, exam_code: null, barcode: null, full_name: "",
+          dob: null, category: null, level: null, listening_category: null,
+          listening_code: null, centre: null, teacher: null, ci_code: null,
+          tshirt_size: null, email: null, phone: null, report_time: null,
+          comp_time: null, deduction: null, notes: null, extra: {},
+          ...payload,
+        } as StudentInsert);
+        toast.success("Student added");
+      }
+      setEditOpen(false);
+      setEditing(null);
+      load();
+    } catch (e) {
+      toast.error(asMsg(e, "Save failed"));
+    }
+  }
+
+  async function doDelete(s: Student) {
+    try {
+      await deleteStudent(s.id);
+      toast.success("Student deleted");
+      load();
+    } catch (e) {
+      toast.error(asMsg(e, "Delete failed"));
+    }
   }
 
   return (
     <div>
       <PageHeader
         title="Students"
-        description="Import students from Excel or add them manually. Each student belongs to one competition category."
+        description="Search the roster, scan a barcode to find a student, or import the master list from Excel/.xlsm."
         actions={
           <>
-            <Button variant="outline" onClick={() => window.open("/api/export/students", "_blank")}>
-              <Download className="w-4 h-4" />
-              Export
-            </Button>
-            <Button variant="outline" onClick={() => setImportOpen(true)}>
-              <Upload className="w-4 h-4" />
-              Import Excel
-            </Button>
             <Button
+              variant="outline"
               onClick={() => {
-                setEditing(null);
-                setEditOpen(true);
+                if (!students || students.length === 0) {
+                  toast.error("No students to export");
+                  return;
+                }
+                downloadWorkbook(studentsToWorkbook(students), `tusgu-students-${stamp()}.xlsx`);
               }}
             >
+              <Download className="w-4 h-4" />
+              <span className="hidden sm:inline">Export</span>
+            </Button>
+            <Button variant="outline" onClick={() => gateThen(() => setImportOpen(true))}>
+              <Upload className="w-4 h-4" />
+              <span className="hidden sm:inline">Import</span>
+            </Button>
+            <Button
+              onClick={() =>
+                gateThen(() => {
+                  setEditing(null);
+                  setEditOpen(true);
+                })
+              }
+            >
               <Plus className="w-4 h-4" />
-              Add Student
+              <span className="hidden sm:inline">Add</span>
             </Button>
           </>
         }
       />
 
+      {!SUPABASE_CONFIGURED && <ConfigBanner />}
+
       <div className="bg-white rounded-xl border border-[#E8E3D7] shadow-sm overflow-hidden">
-        <div className="px-5 py-3 border-b border-[#E8E3D7] flex items-center gap-3">
-          <div className="relative flex-1 max-w-sm">
+        <div className="px-3 sm:px-5 py-3 border-b border-[#E8E3D7] flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="relative flex-1 sm:max-w-md">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#A8A39B]" />
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search name, centre, teacher, category…"
-              className="pl-9"
+              placeholder="Search name, code, centre, teacher…"
+              className="pl-9 pr-10"
             />
+            <button
+              onClick={() => setScannerOpen(true)}
+              title="Scan barcode"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded-md text-[#7A7770] hover:bg-[#F4F1E8] hover:text-[#1B3A6B]"
+            >
+              <ScanLine className="w-4 h-4" />
+            </button>
           </div>
-          <div className="text-sm text-[#7A7770] ml-auto">
+          <div className="text-sm text-[#7A7770] sm:ml-auto">
             {filtered.length} student{filtered.length !== 1 ? "s" : ""}
           </div>
-          <Select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))} className="w-24">
+          <Select
+            value={pageSize}
+            onChange={(e) => setPageSize(Number(e.target.value))}
+            className="w-24"
+          >
             <option value={25}>25</option>
             <option value={50}>50</option>
             <option value={100}>100</option>
+            <option value={500}>500</option>
           </Select>
         </div>
 
         {students == null ? (
-          <TableSkeleton rows={6} cols={7} />
+          <TableSkeleton rows={6} cols={visibleColumns.length + 1} />
         ) : students.length === 0 ? (
           <EmptyState
             icon={Users}
             title="No students yet"
-            description="Add your first student or import from Excel."
+            description="Import your master Excel/.xlsm file or add a student manually."
             action={
-              <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setImportOpen(true)}>
-                  <Upload className="w-4 h-4" /> Import Excel
+              <div className="flex flex-wrap gap-2 justify-center">
+                <Button variant="outline" onClick={() => gateThen(() => setImportOpen(true))}>
+                  <Upload className="w-4 h-4" /> Import
                 </Button>
                 <Button
-                  onClick={() => {
-                    setEditing(null);
-                    setEditOpen(true);
-                  }}
+                  onClick={() =>
+                    gateThen(() => {
+                      setEditing(null);
+                      setEditOpen(true);
+                    })
+                  }
                 >
-                  <Plus className="w-4 h-4" /> Add Student
+                  <Plus className="w-4 h-4" /> Add
                 </Button>
               </div>
             }
@@ -155,43 +262,41 @@ export default function StudentsPage() {
               <table className="tusgu-table">
                 <thead>
                   <tr>
-                    <th>Name</th>
-                    <th>DOB</th>
-                    <th>Age</th>
-                    <th>Category</th>
-                    <th>Centre</th>
-                    <th>Teacher</th>
+                    {visibleColumns.map((c) => (
+                      <th key={String(c.key)}>{c.label}</th>
+                    ))}
+                    {visibleColumns.some((c) => c.key === "dob") && <th>Age</th>}
                     <th className="w-24">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
                   {paged.map((s) => (
                     <tr key={s.id}>
-                      <td className="font-medium">
-                        {s.first_name} {s.last_name}
-                      </td>
-                      <td className="text-[#7A7770]">{formatDate(s.dob)}</td>
-                      <td>{calculateAge(s.dob)}</td>
-                      <td>
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-[#F4F1E8] text-[#1B3A6B]">
-                          {s.category_name}
-                        </span>
-                      </td>
-                      <td>{s.centre}</td>
-                      <td>{s.teacher}</td>
+                      {visibleColumns.map((c) => (
+                        <td key={String(c.key)}>
+                          {c.render
+                            ? c.render(s)
+                            : (s[c.key] as string | number | null) ?? ""}
+                        </td>
+                      ))}
+                      {visibleColumns.some((c) => c.key === "dob") && (
+                        <td>{calculateAge(s.dob) ?? ""}</td>
+                      )}
                       <td>
                         <div className="flex gap-1">
                           <Button
                             variant="ghost"
                             size="sm"
-                            onClick={() => {
-                              setEditing(s);
-                              setEditOpen(true);
-                            }}
+                            onClick={() =>
+                              gateThen(() => {
+                                setEditing(s);
+                                setEditOpen(true);
+                              })
+                            }
                           >
                             <Pencil className="w-3.5 h-3.5" />
                           </Button>
-                          <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(s)}>
+                          <Button variant="ghost" size="sm" onClick={() => gateThen(() => setConfirmDelete(s))}>
                             <Trash2 className="w-3.5 h-3.5 text-[#B8341A]" />
                           </Button>
                         </div>
@@ -201,7 +306,7 @@ export default function StudentsPage() {
                 </tbody>
               </table>
             </div>
-            <div className="px-5 py-3 border-t border-[#E8E3D7] flex items-center justify-between">
+            <div className="px-3 sm:px-5 py-3 border-t border-[#E8E3D7] flex items-center justify-between">
               <div className="text-xs text-[#7A7770]">
                 Page {page} of {totalPages}
               </div>
@@ -230,7 +335,6 @@ export default function StudentsPage() {
           setEditing(null);
         }}
         editing={editing}
-        categories={categories}
         onSave={save}
       />
       <ConfirmDialog
@@ -238,58 +342,94 @@ export default function StudentsPage() {
         onClose={() => setConfirmDelete(null)}
         onConfirm={() => confirmDelete && doDelete(confirmDelete)}
         title="Delete student?"
-        message={`This will delete ${confirmDelete?.first_name} ${confirmDelete?.last_name} and all their score entries.`}
+        message={`This deletes ${confirmDelete?.full_name} and all their score entries.`}
         confirmLabel="Delete"
         destructive
       />
       <ImportModal open={importOpen} onClose={() => setImportOpen(false)} onComplete={load} />
+      <BarcodeScannerModal
+        open={scannerOpen}
+        onClose={() => setScannerOpen(false)}
+        onResult={(text) => {
+          setSearch(text);
+          toast.success(`Scanned: ${text}`);
+        }}
+      />
+      <PasswordModal
+        open={pendingAction !== null}
+        label="Edit roster"
+        onClose={() => setPendingAction(null)}
+        onSuccess={() => {
+          const fn = pendingAction;
+          setPendingAction(null);
+          fn?.();
+        }}
+      />
+    </div>
+  );
+}
+
+function CategoryChip({ value }: { value: string }) {
+  return (
+    <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-[#F4F1E8] text-[#1B3A6B] font-medium">
+      {value}
+    </span>
+  );
+}
+
+function ConfigBanner() {
+  return (
+    <div className="mb-6 px-4 py-3 rounded-xl border border-[#F0DEB8] bg-[#FAF1E5] text-[#7A4A0F]">
+      <div className="font-semibold text-sm mb-1">Supabase isn&apos;t configured</div>
+      <div className="text-xs leading-relaxed">
+        Set <code className="px-1 rounded bg-white/70">NEXT_PUBLIC_SUPABASE_URL</code> and{" "}
+        <code className="px-1 rounded bg-white/70">NEXT_PUBLIC_SUPABASE_ANON_KEY</code> in{" "}
+        <code className="px-1 rounded bg-white/70">.env.local</code> and restart the dev server. See README for the full
+        setup guide.
+      </div>
     </div>
   );
 }
 
 function StudentModal({
-  open,
-  onClose,
-  editing,
-  categories,
-  onSave,
+  open, onClose, editing, onSave,
 }: {
   open: boolean;
   onClose: () => void;
-  editing: StudentWithCategory | null;
-  categories: Category[];
-  onSave: (payload: Omit<StudentWithCategory, "id" | "category_name" | "created_at">) => Promise<unknown>;
+  editing: Student | null;
+  onSave: (payload: Partial<StudentInsert>) => Promise<unknown>;
 }) {
-  const [first, setFirst] = useState("");
-  const [last, setLast] = useState("");
-  const [dob, setDob] = useState("");
-  const [categoryId, setCategoryId] = useState<number | "">("");
-  const [centre, setCentre] = useState("");
-  const [teacher, setTeacher] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [fullName, setFullName] = React.useState("");
+  const [dob, setDob] = React.useState("");
+  const [category, setCategory] = React.useState("");
+  const [centre, setCentre] = React.useState("");
+  const [teacher, setTeacher] = React.useState("");
+  const [studentCode, setStudentCode] = React.useState("");
+  const [examCode, setExamCode] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
 
-  useEffect(() => {
-    setFirst(editing?.first_name ?? "");
-    setLast(editing?.last_name ?? "");
+  React.useEffect(() => {
+    setFullName(editing?.full_name ?? "");
     setDob(editing?.dob ?? "");
-    setCategoryId(editing?.category_id ?? (categories[0]?.id ?? ""));
+    setCategory(editing?.category ?? "");
     setCentre(editing?.centre ?? "");
     setTeacher(editing?.teacher ?? "");
-  }, [editing, open, categories]);
+    setStudentCode(editing?.student_code ?? "");
+    setExamCode(editing?.exam_code ?? "");
+  }, [editing, open]);
 
   async function submit() {
-    if (!first || !last || !dob || !categoryId || !centre || !teacher) {
-      return toast.error("All fields are required");
-    }
+    if (!fullName.trim()) return toast.error("Name is required");
     setBusy(true);
     try {
       await onSave({
-        first_name: first,
-        last_name: last,
-        dob,
-        category_id: Number(categoryId),
-        centre,
-        teacher,
+        full_name: fullName.trim(),
+        dob: dob || null,
+        category: category.trim() || null,
+        centre: centre.trim() || null,
+        teacher: teacher.trim() || null,
+        student_code: studentCode.trim() || null,
+        exam_code: examCode.trim() || null,
       });
     } finally {
       setBusy(false);
@@ -313,137 +453,165 @@ function StudentModal({
         </>
       }
     >
-      {categories.length === 0 ? (
-        <div className="text-sm text-[#B8651A] bg-[#FAF1E5] border border-[#F0DEB8] rounded p-3">
-          You need to create at least one category in Setup before adding students.
+      <div className="space-y-3">
+        <div>
+          <Label>Full Name *</Label>
+          <Input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Student Fullname" />
         </div>
-      ) : (
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label>First Name *</Label>
-              <Input value={first} onChange={(e) => setFirst(e.target.value)} />
-            </div>
-            <div>
-              <Label>Last Name *</Label>
-              <Input value={last} onChange={(e) => setLast(e.target.value)} />
-            </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <Label>Date of Birth</Label>
+            <Input type="date" value={dob} onChange={(e) => setDob(e.target.value)} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label>Date of Birth *</Label>
-              <Input type="date" value={dob} onChange={(e) => setDob(e.target.value)} />
-            </div>
-            <div>
-              <Label>Category *</Label>
-              <Select value={categoryId} onChange={(e) => setCategoryId(Number(e.target.value))}>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </Select>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label>Centre *</Label>
-              <Input value={centre} onChange={(e) => setCentre(e.target.value)} />
-            </div>
-            <div>
-              <Label>Teacher *</Label>
-              <Input value={teacher} onChange={(e) => setTeacher(e.target.value)} />
-            </div>
+          <div>
+            <Label>Category</Label>
+            <Input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. A1, B2, Z3" />
           </div>
         </div>
-      )}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <Label>Centre</Label>
+            <Input value={centre} onChange={(e) => setCentre(e.target.value)} />
+          </div>
+          <div>
+            <Label>Teacher (CI Name)</Label>
+            <Input value={teacher} onChange={(e) => setTeacher(e.target.value)} />
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <Label>Student Code</Label>
+            <Input value={studentCode} onChange={(e) => setStudentCode(e.target.value)} placeholder="SL-NP-…" />
+          </div>
+          <div>
+            <Label>Exam Code (barcode)</Label>
+            <Input value={examCode} onChange={(e) => setExamCode(e.target.value)} placeholder="VA3-039" />
+          </div>
+        </div>
+      </div>
     </Modal>
   );
 }
 
-type ImportPreview = {
+type ImportData = {
+  fileName: string;
+  sheets: { name: string; rowCount: number }[];
+  selectedSheet: string;
   headers: string[];
+  rows: ParsedRow[];
   mapping: Record<StudentField, string | null>;
-  rowCount: number;
-  rows: Record<string, unknown>[];
-  preview: {
-    valid: unknown[];
-    invalid: { row: number; reason: string }[];
-    duplicates: { row: number; existingId: number; data: { first_name: string; last_name: string } }[];
-  };
 };
 
 function ImportModal({
-  open,
-  onClose,
-  onComplete,
+  open, onClose, onComplete,
 }: {
   open: boolean;
   onClose: () => void;
   onComplete: () => void;
 }) {
-  const [stage, setStage] = useState<"pick" | "map" | "confirm" | "done">("pick");
-  const [file, setFile] = useState<File | null>(null);
-  const [data, setData] = useState<ImportPreview | null>(null);
-  const [mapping, setMapping] = useState<Record<StudentField, string | null>>({
-    first_name: null,
-    last_name: null,
-    full_name: null,
-    dob: null,
-    category: null,
-    centre: null,
-    teacher: null,
-  });
-  const [duplicateMode, setDuplicateMode] = useState<"skip" | "overwrite">("skip");
-  const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{ inserted: number; updated: number; skipped: number; invalid: number } | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [stage, setStage] = React.useState<"pick" | "map" | "confirm" | "done">("pick");
+  const [file, setFile] = React.useState<File | null>(null);
+  const [data, setData] = React.useState<ImportData | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const [duplicateMode, setDuplicateMode] = React.useState<"skip" | "overwrite">("skip");
+  const [preview, setPreview] = React.useState<ReturnType<typeof previewStudentImport> | null>(null);
+  const [result, setResult] = React.useState<{ inserted: number; updated: number; skipped: number; invalid: number } | null>(null);
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
 
   function reset() {
     setStage("pick");
     setFile(null);
     setData(null);
+    setPreview(null);
     setResult(null);
-    setMapping({ first_name: null, last_name: null, full_name: null, dob: null, category: null, centre: null, teacher: null });
   }
 
-  async function uploadFile(f: File) {
+  async function pickFile(f: File) {
     setBusy(true);
+    setFile(f);
     try {
-      const fd = new FormData();
-      fd.append("file", f);
-      const r = await fetch("/api/students/import", { method: "POST", body: fd });
-      const d = await r.json();
-      if (!r.ok) {
-        toast.error(d.error || "Failed to parse file");
+      const buffer = await f.arrayBuffer();
+      const wb = parseWorkbook(buffer);
+      const best = wb.best ?? wb.sheets.find((s) => s.headers.length > 0) ?? wb.sheets[0];
+      if (!best) {
+        toast.error("Couldn't find any data in this workbook");
         return;
       }
-      setData(d);
-      setMapping(d.mapping);
+      setData({
+        fileName: f.name,
+        sheets: wb.sheets.map((s) => ({ name: s.sheetName, rowCount: s.rowCount })),
+        selectedSheet: best.sheetName,
+        headers: best.headers,
+        rows: best.rows,
+        mapping: autoMapColumns(best.headers),
+      });
       setStage("map");
+    } catch (e) {
+      toast.error(asMsg(e, "Failed to parse file"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function selectSheet(name: string) {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const buffer = await file.arrayBuffer();
+      const wb = parseWorkbook(buffer);
+      const sheet = wb.sheets.find((s) => s.sheetName === name);
+      if (!sheet) return;
+      setData({
+        fileName: file.name,
+        sheets: wb.sheets.map((s) => ({ name: s.sheetName, rowCount: s.rowCount })),
+        selectedSheet: name,
+        headers: sheet.headers,
+        rows: sheet.rows,
+        mapping: autoMapColumns(sheet.headers),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function buildPreview() {
+    if (!data) return;
+    setBusy(true);
+    try {
+      const existing = SUPABASE_CONFIGURED ? await listStudents() : [];
+      const p = previewStudentImport(data.rows, data.mapping, existing);
+      setPreview(p);
+      setStage("confirm");
+    } catch (e) {
+      toast.error(asMsg(e, "Preview failed"));
     } finally {
       setBusy(false);
     }
   }
 
   async function commit() {
-    if (!data) return;
-    // re-preview client-side based on adjusted mapping
+    if (!preview) return;
     setBusy(true);
     try {
-      const r = await fetch("/api/students/import", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ rows: data.rows, mapping, duplicateMode }),
-      });
-      const d = await r.json();
-      if (!r.ok) {
-        toast.error(d.error || "Import failed");
-        return;
+      let inserted = 0;
+      let updated = 0;
+      let skipped = 0;
+      if (preview.valid.length > 0) {
+        inserted = await bulkInsertStudents(preview.valid);
       }
-      setResult(d);
+      if (duplicateMode === "overwrite") {
+        for (const dup of preview.duplicates) {
+          await updateStudent(dup.existingId, dup.data);
+          updated++;
+        }
+      } else {
+        skipped = preview.duplicates.length;
+      }
+      setResult({ inserted, updated, skipped, invalid: preview.invalid.length });
       setStage("done");
       onComplete();
+    } catch (e) {
+      toast.error(asMsg(e, "Import failed"));
     } finally {
       setBusy(false);
     }
@@ -458,46 +626,24 @@ function ImportModal({
           onClose();
         }
       }}
-      title="Import Students from Excel"
+      title="Import Students"
+      description="Drop your Excel/.xlsm file. The importer auto-detects columns and skips columns that don't apply."
       width="max-w-3xl"
       footer={
         stage === "pick" ? (
-          <Button
-            variant="outline"
-            onClick={() => {
-              reset();
-              onClose();
-            }}
-          >
-            Cancel
-          </Button>
+          <Button variant="outline" onClick={() => { reset(); onClose(); }}>Cancel</Button>
         ) : stage === "map" ? (
           <>
-            <Button variant="outline" onClick={() => setStage("pick")} disabled={busy}>
-              Back
-            </Button>
-            <Button onClick={() => setStage("confirm")} disabled={busy}>
-              Continue
-            </Button>
+            <Button variant="outline" onClick={() => { reset(); }} disabled={busy}>Back</Button>
+            <Button onClick={buildPreview} disabled={busy}>Continue</Button>
           </>
         ) : stage === "confirm" ? (
           <>
-            <Button variant="outline" onClick={() => setStage("map")} disabled={busy}>
-              Back
-            </Button>
-            <Button onClick={commit} disabled={busy}>
-              {busy ? "Importing…" : "Import"}
-            </Button>
+            <Button variant="outline" onClick={() => setStage("map")} disabled={busy}>Back</Button>
+            <Button onClick={commit} disabled={busy}>{busy ? "Importing…" : `Import ${preview?.valid.length ?? 0} students`}</Button>
           </>
         ) : (
-          <Button
-            onClick={() => {
-              reset();
-              onClose();
-            }}
-          >
-            Done
-          </Button>
+          <Button onClick={() => { reset(); onClose(); }}>Done</Button>
         )
       }
     >
@@ -508,36 +654,31 @@ function ImportModal({
             onDrop={(e) => {
               e.preventDefault();
               const f = e.dataTransfer.files[0];
-              if (f) {
-                setFile(f);
-                uploadFile(f);
-              }
+              if (f) pickFile(f);
             }}
             onDragOver={(e) => e.preventDefault()}
-            className="border-2 border-dashed border-[#D9D2BE] hover:border-[#1B3A6B] hover:bg-[#F4F1E8] rounded-lg p-10 text-center cursor-pointer transition-colors"
+            className="border-2 border-dashed border-[#D9D2BE] hover:border-[#1B3A6B] hover:bg-[#F4F1E8] rounded-lg p-8 sm:p-10 text-center cursor-pointer transition-colors"
           >
             <Upload className="w-10 h-10 mx-auto text-[#A8A39B] mb-3" />
-            <div className="text-sm font-medium text-[#1F1E1B] mb-1">Drop your Excel file here</div>
-            <div className="text-xs text-[#7A7770]">or click to browse (.xlsx, .xls)</div>
+            <div className="text-sm font-medium text-[#1F1E1B] mb-1">Drop your spreadsheet here</div>
+            <div className="text-xs text-[#7A7770]">or click to browse — supports .xlsx, .xlsm, .xls, .csv</div>
             <input
               ref={inputRef}
               type="file"
-              accept=".xlsx,.xls"
+              accept=".xlsx,.xlsm,.xls,.csv,application/vnd.ms-excel.sheet.macroEnabled.12,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
               className="hidden"
               onChange={(e) => {
                 const f = e.target.files?.[0];
-                if (f) {
-                  setFile(f);
-                  uploadFile(f);
-                }
+                if (f) pickFile(f);
               }}
             />
-            {file && <div className="text-xs text-[#7A7770] mt-3">{file.name}</div>}
+            {busy && <div className="text-xs text-[#7A7770] mt-3">Reading file…</div>}
           </div>
-          <div className="text-xs text-[#7A7770] bg-[#F5F2EB] border border-[#E8E3D7] rounded p-3">
-            <strong className="text-[#1F1E1B]">Expected columns:</strong> First Name, Last Name, Date of Birth, Category,
-            Centre, Teacher. Column names don&apos;t need to match exactly — they&apos;ll be auto-detected and you can adjust the
-            mapping in the next step.
+          <div className="text-xs text-[#7A7770] bg-[#F5F2EB] border border-[#E8E3D7] rounded p-3 leading-relaxed">
+            The importer reads <strong>.xlsm</strong> macro workbooks the same as plain .xlsx — macros are
+            ignored, sheet data is parsed normally. Columns like &ldquo;Student Fullname&rdquo;, &ldquo;Visual 2025
+            Category&rdquo;, &ldquo;CI Name&rdquo;, &ldquo;Centre Name&rdquo;, &ldquo;Exam Code&rdquo; are auto-mapped. Anything else is preserved
+            on each student record under <code>extra</code> so no data is lost.
           </div>
         </div>
       )}
@@ -545,25 +686,44 @@ function ImportModal({
       {stage === "map" && data && (
         <div className="space-y-4">
           <div className="text-sm text-[#7A7770]">
-            Detected <strong className="text-[#1F1E1B]">{data.rowCount}</strong> rows. Confirm column mapping:
+            <span className="font-medium text-[#1F1E1B]">{data.fileName}</span> · sheet{" "}
+            <span className="font-medium text-[#1F1E1B]">{data.selectedSheet}</span> ·{" "}
+            <span className="font-medium text-[#1F1E1B]">{data.rows.length}</span> rows
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            {STUDENT_FIELDS.map((f) => (
-              <div key={f}>
-                <Label>{labelFor(f)}</Label>
-                <Select
-                  value={mapping[f] ?? ""}
-                  onChange={(e) => setMapping((m) => ({ ...m, [f]: e.target.value || null }))}
-                >
-                  <option value="">— Not mapped —</option>
-                  {data.headers.map((h) => (
-                    <option key={h} value={h}>
-                      {h}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-            ))}
+          {data.sheets.length > 1 && (
+            <div>
+              <Label>Sheet</Label>
+              <Select value={data.selectedSheet} onChange={(e) => selectSheet(e.target.value)}>
+                {data.sheets.map((s) => (
+                  <option key={s.name} value={s.name}>
+                    {s.name} ({s.rowCount} rows)
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+          <div>
+            <Label>Column mapping</Label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[40vh] overflow-y-auto pr-1">
+              {STUDENT_FIELDS.map((f) => (
+                <div key={f}>
+                  <Label className="text-[11px] text-[#7A7770]">{STUDENT_FIELD_LABELS[f]}</Label>
+                  <Select
+                    value={data.mapping[f] ?? ""}
+                    onChange={(e) =>
+                      setData({ ...data, mapping: { ...data.mapping, [f]: e.target.value || null } })
+                    }
+                  >
+                    <option value="">— Not mapped —</option>
+                    {data.headers.map((h) => (
+                      <option key={h} value={h}>
+                        {h}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+              ))}
+            </div>
           </div>
           <details className="text-xs text-[#7A7770]">
             <summary className="cursor-pointer text-[#1F1E1B] font-medium mb-2">Preview first 5 rows</summary>
@@ -571,7 +731,7 @@ function ImportModal({
               <table className="tusgu-table">
                 <thead>
                   <tr>
-                    {data.headers.map((h) => (
+                    {data.headers.slice(0, 12).map((h) => (
                       <th key={h}>{h}</th>
                     ))}
                   </tr>
@@ -579,7 +739,7 @@ function ImportModal({
                 <tbody>
                   {data.rows.slice(0, 5).map((r, i) => (
                     <tr key={i}>
-                      {data.headers.map((h) => (
+                      {data.headers.slice(0, 12).map((h) => (
                         <td key={h}>{String(r[h] ?? "")}</td>
                       ))}
                     </tr>
@@ -591,53 +751,40 @@ function ImportModal({
         </div>
       )}
 
-      {stage === "confirm" && data && (
+      {stage === "confirm" && preview && (
         <div className="space-y-4">
           <div className="grid grid-cols-3 gap-3">
-            <Stat label="Valid" value={data.preview.valid.length} color="text-[#5A8E54]" />
-            <Stat label="Duplicates" value={data.preview.duplicates.length} color="text-[#B8651A]" />
-            <Stat label="Invalid" value={data.preview.invalid.length} color="text-[#B8341A]" />
+            <Stat label="Valid" value={preview.valid.length} color="text-[#5A8E54]" />
+            <Stat label="Duplicates" value={preview.duplicates.length} color="text-[#B8651A]" />
+            <Stat label="Invalid" value={preview.invalid.length} color="text-[#B8341A]" />
           </div>
-          {data.preview.duplicates.length > 0 && (
+          {preview.duplicates.length > 0 && (
             <div className="border border-[#F0DEB8] bg-[#FAF1E5] rounded p-3">
-              <div className="text-sm font-medium text-[#1F1E1B] mb-2">Duplicates detected (matched on name + DOB)</div>
+              <div className="text-sm font-medium text-[#1F1E1B] mb-2">Duplicates (matched by student code, exam code, or name + DOB)</div>
               <div className="flex gap-3 text-sm">
                 <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    checked={duplicateMode === "skip"}
-                    onChange={() => setDuplicateMode("skip")}
-                  />
-                  Skip duplicates
+                  <input type="radio" checked={duplicateMode === "skip"} onChange={() => setDuplicateMode("skip")} />
+                  Skip
                 </label>
                 <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    checked={duplicateMode === "overwrite"}
-                    onChange={() => setDuplicateMode("overwrite")}
-                  />
-                  Overwrite existing
+                  <input type="radio" checked={duplicateMode === "overwrite"} onChange={() => setDuplicateMode("overwrite")} />
+                  Overwrite
                 </label>
               </div>
             </div>
           )}
-          {data.preview.invalid.length > 0 && (
+          {preview.invalid.length > 0 && (
             <details className="text-sm">
               <summary className="cursor-pointer text-[#B8341A] font-medium">
-                {data.preview.invalid.length} invalid rows will be skipped
+                {preview.invalid.length} invalid rows will be skipped
               </summary>
               <ul className="mt-2 max-h-40 overflow-y-auto text-xs text-[#7A7770] space-y-1 list-disc list-inside">
-                {data.preview.invalid.slice(0, 30).map((iv, i) => (
-                  <li key={i}>
-                    Row {iv.row}: {iv.reason}
-                  </li>
+                {preview.invalid.slice(0, 30).map((iv, i) => (
+                  <li key={i}>Row {iv.row}: {iv.reason}</li>
                 ))}
               </ul>
             </details>
           )}
-          <div className="text-xs text-[#7A7770]">
-            Categories not yet present will be created automatically.
-          </div>
         </div>
       )}
 
@@ -663,16 +810,11 @@ function Stat({ label, value, color }: { label: string; value: number; color: st
   );
 }
 
-function labelFor(f: StudentField): string {
-  const map: Record<StudentField, string> = {
-    first_name: "First Name",
-    last_name: "Last Name",
-    full_name: "Full Name (combined)",
-    dob: "Date of Birth",
-    category: "Category",
-    centre: "Centre",
-    teacher: "Teacher",
-  };
-  const optional = f === "full_name" ? "" : " *";
-  return map[f] + optional;
+function asMsg(e: unknown, fallback: string): string {
+  if (e instanceof Error) return e.message;
+  return fallback;
+}
+
+function stamp() {
+  return new Date().toISOString().slice(0, 10);
 }
