@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(brew --version)",
+      "Read(//opt/homebrew/bin/**)",
+      "Read(//Users/seeron/**)",
+      "Bash(curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh)",
+      "Bash(bash)",
+      "Bash(mkdir -p ~/bin)",
+      "Read(//private/tmp/**)",
+      "Bash(curl -sL https://github.com/cli/cli/releases/download/v2.65.0/gh_2.65.0_macOS_arm64.zip -o gh.zip)",
+      "Bash(unzip -q -o gh.zip)",
+      "Bash(cp gh_2.65.0_macOS_arm64/bin/gh ~/bin/gh)",
+      "Bash(shopt -s dotglob)",
+      "Bash(cp -R /tmp/tusgu-scaffold/. .)",
+      "Bash(rm -rf .git)",
+      "Bash(rm -rf /tmp/tusgu-scaffold)",
+      "Bash(rm -rf .next .claude AGENTS.md CLAUDE.md README.md)",
+      "Bash(curl -s -o /tmp/login-page.html -w \"HTTP %{http_code}\\\\n\" http://localhost:3737/login)",
+      "Read(//tmp/**)",
+      "Bash(curl -s -X POST -H \"content-type: application/json\" -d '{\"username\":\"tusguscore\",\"password\":\"internalcomp26\"}' -c /tmp/tusgu-cookies.txt -w \"HTTP %{http_code}\\\\n\" http://localhost:3737/api/auth/login)",
+      "Bash(curl -s -b /tmp/tusgu-cookies.txt -o /tmp/setup-page.html -w \"HTTP %{http_code}\\\\n\" http://localhost:3737/setup)",
+      "Bash(curl -s -b /tmp/tusgu-cookies.txt http://localhost:3737/api/categories)",
+      "Bash(curl -s -b /tmp/tusgu-cookies.txt http://localhost:3737/api/question-types)",
+      "Bash(curl -s -b /tmp/tusgu-cookies.txt -o /tmp/students.html -w \"HTTP %{http_code}\\\\n\" http://localhost:3737/students)",
+      "Bash(curl -s -b /tmp/tusgu-cookies.txt -o /dev/null -w \"students=%{http_code}\\\\n\" http://localhost:3737/students)",
+      "Bash(curl -s -b /tmp/tusgu-cookies.txt -o /dev/null -w \"api/students=%{http_code}\\\\n\" http://localhost:3737/api/students)",
+      "Bash(curl -s -b /tmp/tusgu-cookies.txt -o /dev/null -w \"scores=%{http_code}\\\\n\" http://localhost:3737/scores)",
+      "Bash(curl -s -b /tmp/tusgu-cookies.txt -o /dev/null -w \"sync=%{http_code}\\\\n\" http://localhost:3737/sync)",
+      "Bash(curl -s -b /tmp/tusgu-cookies.txt -w \"categories=%{http_code}\\\\n\" http://localhost:3737/api/categories)",
+      "Bash(curl -s -b /tmp/tusgu-cookies.txt -X POST -H 'content-type: application/json' -d '{\"name\":\"Junior\"}' http://localhost:3737/api/categories)",
+      "Bash(curl -s -b /tmp/tusgu-cookies.txt -X POST -H 'content-type: application/json' -d '{\"name\":\"Senior\"}' http://localhost:3737/api/categories)",
+      "Bash(curl -s -b /tmp/tusgu-cookies.txt -X POST -H 'content-type: application/json' -d '{\"first_name\":\"Alice\",\"last_name\":\"Smith\",\"dob\":\"2015-03-12\",\"category_id\":1,\"centre\":\"Sydney CBD\",\"teacher\":\"Mr. Lee\"}' http://localhost:3737/api/students)",
+      "Bash(curl -s -b /tmp/tusgu-cookies.txt -X POST -H 'content-type: application/json' -d '{\"first_name\":\"Bob\",\"last_name\":\"Jones\",\"dob\":\"2016-07-04\",\"category_id\":1,\"centre\":\"Sydney CBD\",\"teacher\":\"Mr. Lee\"}' http://localhost:3737/api/students)",
+      "Bash(curl -s -b /tmp/tusgu-cookies.txt -X POST -H 'content-type: application/json' -d '{\"first_name\":\"Carol\",\"last_name\":\"Davis\",\"dob\":\"2010-01-15\",\"category_id\":2,\"centre\":\"Parramatta\",\"teacher\":\"Ms. Wong\"}' http://localhost:3737/api/students)",
+      "Bash(python3 -c ' *)",
+      "Bash(curl -s -b /tmp/tusgu-cookies.txt -X PUT -H 'content-type: application/json' -d '{\"items\":[ *)",
+      "Bash(curl -s -b /tmp/tusgu-cookies.txt 'http://localhost:3737/api/leaderboard?trophies=1')",
+      "Bash(grep -E \"sheet[0-9]+\\\\.xml$\")"
+    ]
+  }
+}
