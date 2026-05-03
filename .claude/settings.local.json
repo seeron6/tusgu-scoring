@@ -37,7 +37,15 @@
       "Bash(python3 -c ' *)",
       "Bash(curl -s -b /tmp/tusgu-cookies.txt -X PUT -H 'content-type: application/json' -d '{\"items\":[ *)",
       "Bash(curl -s -b /tmp/tusgu-cookies.txt 'http://localhost:3737/api/leaderboard?trophies=1')",
-      "Bash(grep -E \"sheet[0-9]+\\\\.xml$\")"
+      "Bash(grep -E \"sheet[0-9]+\\\\.xml$\")",
+      "Bash(xargs sed *)",
+      "Bash(curl -s -b /tmp/tusgu-cookies.txt -o /dev/null -w 'leaderboard pdf=%{http_code}  awards pdf=%{http_code}  awards xlsx=%{http_code}\\\\n' 'http://localhost:3737/api/export/leaderboard?trophies=1&format=pdf' 'http://localhost:3737/api/export/awards?format=pdf' 'http://localhost:3737/api/export/awards?format=xlsx')",
+      "Bash(curl -s -b /tmp/tusgu-cookies.txt -o /dev/null -w '%{http_code}' http://localhost:3737__TRACKED_VAR__)",
+      "Bash(/usr/bin/curl -s -b /tmp/tusgu-cookies.txt -o /dev/null -w '%{http_code}' http://localhost:3737__TRACKED_VAR__)",
+      "Bash(/usr/bin/curl -s -X POST -H \"content-type: application/json\" -d '{\"username\":\"tusguscore\",\"password\":\"internalcomp26\"}' -c /tmp/tusgu-cookies.txt -o /dev/null -w \"login=%{http_code}\\\\n\" http://localhost:3737/api/auth/login)",
+      "Bash(/usr/bin/curl -s -b /tmp/tusgu-cookies.txt -o /dev/null -w '%{http_code}' http://localhost:3737/api/export/__TRACKED_VAR__)",
+      "Bash(git add *)",
+      "Bash(git -c user.name=TUSGU -c user.email=dev@tusgu.local commit -m 'Design refresh + PDF/image exports + smart Google Sheets *)"
     ]
   }
 }

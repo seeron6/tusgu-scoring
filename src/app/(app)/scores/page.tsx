@@ -88,7 +88,7 @@ export default function ScoresPage() {
       {students == null ? (
         <TableSkeleton rows={6} cols={3} />
       ) : students.length === 0 ? (
-        <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-sm">
+        <div className="bg-white rounded-xl border border-[#E8E3D7] shadow-sm">
           <EmptyState
             icon={Users}
             title="No students yet"
@@ -99,7 +99,7 @@ export default function ScoresPage() {
           />
         </div>
       ) : questionTypes.length === 0 ? (
-        <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-sm">
+        <div className="bg-white rounded-xl border border-[#E8E3D7] shadow-sm">
           <EmptyState
             icon={ClipboardList}
             title="No question types yet"
@@ -109,10 +109,10 @@ export default function ScoresPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6">
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-[#E2E8F0]">
+          <div className="bg-white rounded-xl border border-[#E8E3D7] shadow-sm overflow-hidden">
+            <div className="px-4 py-3 border-b border-[#E8E3D7]">
               <div className="relative">
-                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#A8A39B]" />
                 <Input
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
@@ -126,26 +126,26 @@ export default function ScoresPage() {
                 <li key={s.id}>
                   <button
                     onClick={() => setSelectedId(s.id)}
-                    className={`w-full text-left px-4 py-3 border-b border-[#E2E8F0] transition-colors ${
-                      selectedId === s.id ? "bg-[#EFF6FF]" : "hover:bg-slate-50"
+                    className={`w-full text-left px-4 py-3 border-b border-[#E8E3D7] transition-colors ${
+                      selectedId === s.id ? "bg-[#F4F1E8]" : "hover:bg-[#F5F2EB]"
                     }`}
                   >
-                    <div className="text-sm font-medium text-[#0F172A]">
+                    <div className="text-sm font-medium text-[#1F1E1B]">
                       {s.first_name} {s.last_name}
                     </div>
-                    <div className="text-xs text-[#64748B] mt-0.5">
+                    <div className="text-xs text-[#7A7770] mt-0.5">
                       {s.category_name} · {s.centre}
                     </div>
                   </button>
                 </li>
               ))}
               {filtered.length === 0 && (
-                <li className="px-4 py-6 text-center text-sm text-[#64748B]">No matches</li>
+                <li className="px-4 py-6 text-center text-sm text-[#7A7770]">No matches</li>
               )}
             </ul>
           </div>
 
-          <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-sm overflow-hidden">
+          <div className="bg-white rounded-xl border border-[#E8E3D7] shadow-sm overflow-hidden">
             {selected == null ? (
               <EmptyState
                 icon={ClipboardList}
@@ -154,11 +154,11 @@ export default function ScoresPage() {
               />
             ) : (
               <div>
-                <div className="px-6 py-4 border-b border-[#E2E8F0]">
-                  <h2 className="text-lg font-bold text-[#0F172A]">
+                <div className="px-6 py-4 border-b border-[#E8E3D7]">
+                  <h2 className="text-lg font-bold text-[#1F1E1B]">
                     {selected.first_name} {selected.last_name}
                   </h2>
-                  <div className="text-sm text-[#64748B] mt-1">
+                  <div className="text-sm text-[#7A7770] mt-1">
                     {selected.category_name} · {selected.centre} · Teacher: {selected.teacher}
                   </div>
                 </div>
@@ -170,7 +170,7 @@ export default function ScoresPage() {
                       <div key={qt.id}>
                         <Label>
                           {qt.name}{" "}
-                          <span className="text-xs text-[#64748B] font-normal">(max {maxQt})</span>
+                          <span className="text-xs text-[#7A7770] font-normal">(max {maxQt})</span>
                         </Label>
                         <Input
                           type="number"
@@ -186,14 +186,14 @@ export default function ScoresPage() {
                     );
                   })}
                 </div>
-                <div className="px-6 py-5 border-t border-[#E2E8F0] bg-[#F8FAFC] flex items-center justify-between">
+                <div className="px-6 py-5 border-t border-[#E8E3D7] bg-[#FAF9F5] flex items-center justify-between">
                   <div>
-                    <div className="text-xs text-[#64748B] uppercase tracking-wide">Total Score</div>
+                    <div className="text-xs text-[#7A7770] uppercase tracking-wide">Total Score</div>
                     <div className="text-3xl font-bold text-[#1B3A6B]">
                       {total}{" "}
-                      <span className="text-base text-[#64748B] font-normal">/ {max}</span>
+                      <span className="text-base text-[#7A7770] font-normal">/ {max}</span>
                     </div>
-                    <div className="text-xs text-[#64748B] mt-1">{pct.toFixed(1)}%</div>
+                    <div className="text-xs text-[#7A7770] mt-1">{pct.toFixed(1)}%</div>
                   </div>
                   <Button onClick={save} disabled={busy} size="lg">
                     <Save className="w-4 h-4" />
@@ -334,11 +334,11 @@ function ScoreImportModal({ open, onClose }: { open: boolean; onClose: () => voi
               if (f) upload(f);
             }}
             onDragOver={(e) => e.preventDefault()}
-            className="border-2 border-dashed border-[#CBD5E1] hover:border-[#2563EB] hover:bg-[#EFF6FF] rounded-lg p-10 text-center cursor-pointer transition-colors"
+            className="border-2 border-dashed border-[#D9D2BE] hover:border-[#1B3A6B] hover:bg-[#F4F1E8] rounded-lg p-10 text-center cursor-pointer transition-colors"
           >
-            <Upload className="w-10 h-10 mx-auto text-[#94A3B8] mb-3" />
-            <div className="text-sm font-medium text-[#0F172A] mb-1">Drop your scores Excel file here</div>
-            <div className="text-xs text-[#64748B]">or click to browse (.xlsx, .xls)</div>
+            <Upload className="w-10 h-10 mx-auto text-[#A8A39B] mb-3" />
+            <div className="text-sm font-medium text-[#1F1E1B] mb-1">Drop your scores Excel file here</div>
+            <div className="text-xs text-[#7A7770]">or click to browse (.xlsx, .xls)</div>
             <input
               ref={inputRef}
               type="file"
@@ -350,8 +350,8 @@ function ScoreImportModal({ open, onClose }: { open: boolean; onClose: () => voi
               }}
             />
           </div>
-          <div className="text-xs text-[#64748B] bg-slate-50 border border-[#E2E8F0] rounded p-3">
-            <strong className="text-[#0F172A]">Expected columns:</strong> a Name column (full name as
+          <div className="text-xs text-[#7A7770] bg-[#F5F2EB] border border-[#E8E3D7] rounded p-3">
+            <strong className="text-[#1F1E1B]">Expected columns:</strong> a Name column (full name as
             <code className="bg-white px-1 mx-1 rounded">First Last</code>), optionally Date of Birth (helps disambiguate
             duplicate names), and one column per question type matching the names in Setup.
           </div>
@@ -360,8 +360,8 @@ function ScoreImportModal({ open, onClose }: { open: boolean; onClose: () => voi
 
       {stage === "map" && data && (
         <div className="space-y-4">
-          <div className="text-sm text-[#64748B]">
-            Detected <strong className="text-[#0F172A]">{data.rowCount}</strong> rows.
+          <div className="text-sm text-[#7A7770]">
+            Detected <strong className="text-[#1F1E1B]">{data.rowCount}</strong> rows.
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -393,7 +393,7 @@ function ScoreImportModal({ open, onClose }: { open: boolean; onClose: () => voi
               </Select>
             </div>
           </div>
-          <div className="text-sm font-medium text-[#0F172A] mt-2">Score columns</div>
+          <div className="text-sm font-medium text-[#1F1E1B] mt-2">Score columns</div>
           <div className="grid grid-cols-2 gap-3">
             {data.questionTypes.map((qt) => (
               <div key={qt.id}>
@@ -420,8 +420,8 @@ function ScoreImportModal({ open, onClose }: { open: boolean; onClose: () => voi
       {stage === "done" && result && (
         <div className="text-center py-6">
           <div className="text-4xl mb-2">✓</div>
-          <div className="text-base font-semibold text-[#0F172A] mb-1">Import complete</div>
-          <div className="text-sm text-[#64748B]">
+          <div className="text-base font-semibold text-[#1F1E1B] mb-1">Import complete</div>
+          <div className="text-sm text-[#7A7770]">
             {result.matched} students matched · {result.upserted} score values written · {result.invalid} rows skipped
           </div>
         </div>

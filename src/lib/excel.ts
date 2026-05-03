@@ -11,18 +11,112 @@ export function parseWorkbook(buffer: ArrayBuffer): { sheetNames: string[]; rows
   const firstSheet = wb.SheetNames[0];
   if (!firstSheet) return { sheetNames: [], rows: [], headers: [] };
   const ws = wb.Sheets[firstSheet];
-  const rows = XLSX.utils.sheet_to_json<ParsedRow>(ws, { defval: "", raw: false });
-  const headers = rows.length > 0 ? Object.keys(rows[0]) : [];
-  return { sheetNames: wb.SheetNames, rows, headers };
+  const aoa = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: "", raw: false, blankrows: false });
+  const cleaned = cleanGrid(aoa);
+  return { sheetNames: wb.SheetNames, rows: cleaned.rows, headers: cleaned.headers };
+}
+
+/**
+ * Take a 2D grid (rows of cells) and produce { headers, rows }:
+ *  - find the header row by scoring keyword matches across the first 12 rows
+ *  - slice everything below the header into row objects keyed by header name
+ *  - drop fully-blank rows
+ *  - trim cells
+ */
+export function cleanGrid(grid: unknown[][]): { headers: string[]; rows: ParsedRow[] } {
+  if (!grid || grid.length === 0) return { headers: [], rows: [] };
+
+  const headerRowIdx = findHeaderRow(grid);
+  if (headerRowIdx < 0) {
+    // fallback: assume first non-empty row is the header
+    const idx = grid.findIndex((r) => Array.isArray(r) && r.some((c) => normalizeCell(c) !== ""));
+    if (idx < 0) return { headers: [], rows: [] };
+    return buildFromHeader(grid, idx);
+  }
+  return buildFromHeader(grid, headerRowIdx);
+}
+
+function buildFromHeader(grid: unknown[][], headerIdx: number): { headers: string[]; rows: ParsedRow[] } {
+  const rawHeaders = grid[headerIdx] as unknown[];
+  const headers: string[] = [];
+  const seen: Record<string, number> = {};
+  for (let i = 0; i < rawHeaders.length; i++) {
+    let h = normalizeCell(rawHeaders[i]) || `Column ${i + 1}`;
+    // Disambiguate duplicate header names
+    if (seen[h] != null) {
+      seen[h]++;
+      h = `${h} (${seen[h]})`;
+    } else {
+      seen[h] = 1;
+    }
+    headers.push(h);
+  }
+
+  const rows: ParsedRow[] = [];
+  for (let r = headerIdx + 1; r < grid.length; r++) {
+    const row = grid[r];
+    if (!Array.isArray(row)) continue;
+    const obj: ParsedRow = {};
+    let hasAny = false;
+    for (let c = 0; c < headers.length; c++) {
+      const v = normalizeCell(row[c]);
+      if (v !== "") hasAny = true;
+      obj[headers[c]] = v;
+    }
+    if (hasAny) rows.push(obj);
+  }
+  return { headers, rows };
+}
+
+function normalizeCell(v: unknown): string {
+  if (v == null) return "";
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  return String(v).replace(/\s+/g, " ").trim();
+}
+
+const HEADER_HINTS_FOR_DETECTION = [
+  "name", "first", "last", "surname", "given",
+  "dob", "birth", "born",
+  "category", "group", "division", "class", "level",
+  "centre", "center", "school", "team", "branch",
+  "teacher", "tutor", "coach",
+  "score", "total", "addition", "subtraction", "multiplication", "division",
+];
+
+function findHeaderRow(grid: unknown[][]): number {
+  let bestIdx = -1;
+  let bestScore = 0;
+  const limit = Math.min(grid.length, 15);
+  for (let i = 0; i < limit; i++) {
+    const row = grid[i];
+    if (!Array.isArray(row)) continue;
+    let score = 0;
+    let nonEmpty = 0;
+    for (const c of row) {
+      const v = normalizeCell(c).toLowerCase();
+      if (!v) continue;
+      nonEmpty++;
+      // header cells are usually short text labels, not long sentences
+      if (v.length > 50) continue;
+      if (HEADER_HINTS_FOR_DETECTION.some((h) => v === h || v.includes(h))) score++;
+    }
+    // require at least 2 hits and at least 2 non-empty cells
+    if (score >= 2 && nonEmpty >= 2 && score > bestScore) {
+      bestScore = score;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
 }
 
 const FIELD_HINTS: Record<StudentField, string[]> = {
-  first_name: ["first name", "firstname", "first", "given name", "given"],
-  last_name: ["last name", "lastname", "surname", "family name", "last"],
-  dob: ["dob", "date of birth", "birth", "birthday", "born"],
-  category: ["category", "group", "division", "class"],
-  centre: ["centre", "center", "school", "team", "branch", "location"],
-  teacher: ["teacher", "tutor", "instructor", "coach"],
+  first_name: ["first name", "firstname", "first", "given name", "given", "fname"],
+  last_name: ["last name", "lastname", "surname", "family name", "last", "lname"],
+  full_name: ["full name", "student name", "name", "fullname", "student", "pupil", "child"],
+  dob: ["dob", "date of birth", "birth date", "birthdate", "birthday", "born"],
+  category: ["category", "group", "division", "class", "level", "grade"],
+  centre: ["centre", "center", "school", "team", "branch", "location", "site"],
+  teacher: ["teacher", "tutor", "instructor", "coach", "mentor"],
 };
 
 export function autoMapColumns(headers: string[]): Record<StudentField, string | null> {
@@ -32,14 +126,25 @@ export function autoMapColumns(headers: string[]): Record<StudentField, string |
     const hints = FIELD_HINTS[f];
     let matched: string | null = null;
     for (const h of hints) {
-      const found = lower.find((c) => c.low === h) || lower.find((c) => c.low.includes(h));
-      if (found) {
-        matched = found.orig;
+      const exact = lower.find((c) => c.low === h);
+      if (exact) {
+        matched = exact.orig;
         break;
+      }
+    }
+    if (!matched) {
+      for (const h of hints) {
+        const partial = lower.find((c) => c.low.includes(h));
+        if (partial) {
+          matched = partial.orig;
+          break;
+        }
       }
     }
     result[f] = matched;
   }
+  // If we matched first/last AND full, prefer first/last (don't double-up)
+  if (result.first_name && result.last_name) result.full_name = null;
   return result;
 }
 
@@ -50,23 +155,42 @@ export function normalizeDob(input: unknown): string | null {
     return input.toISOString().slice(0, 10);
   }
   const s = String(input).trim();
-  // try YYYY-MM-DD first
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  // try DD/MM/YYYY or DD-MM-YYYY
-  const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
-  if (m) {
-    let [, d, mo, y] = m;
+  if (!s) return null;
+  // ISO already
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  // DD/MM/YYYY or DD-MM-YYYY (UK/AU)
+  const dmy = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if (dmy) {
+    let [, d, mo, y] = dmy;
     if (y.length === 2) y = (parseInt(y, 10) > 30 ? "19" : "20") + y;
     const dn = parseInt(d, 10);
     const mn = parseInt(mo, 10);
     const yn = parseInt(y, 10);
-    if (mn < 1 || mn > 12 || dn < 1 || dn > 31) return null;
-    return `${yn}-${String(mn).padStart(2, "0")}-${String(dn).padStart(2, "0")}`;
+    if (mn >= 1 && mn <= 12 && dn >= 1 && dn <= 31) {
+      return `${yn}-${String(mn).padStart(2, "0")}-${String(dn).padStart(2, "0")}`;
+    }
+    // try MM/DD/YYYY (US fallback) if DD/MM didn't parse cleanly
+    if (dn >= 1 && dn <= 12 && mn >= 1 && mn <= 31) {
+      return `${yn}-${String(dn).padStart(2, "0")}-${String(mn).padStart(2, "0")}`;
+    }
   }
-  // try plain Date parse
+  // Excel-style "1 Jan 2015" / "January 15, 2015"
   const parsed = new Date(s);
   if (!isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
   return null;
+}
+
+function splitFullName(full: string): { first: string; last: string } {
+  const cleaned = full.replace(/\s+/g, " ").trim();
+  if (!cleaned) return { first: "", last: "" };
+  // "Last, First" pattern
+  if (cleaned.includes(",")) {
+    const [last, first] = cleaned.split(",").map((s) => s.trim());
+    if (last && first) return { first, last };
+  }
+  const parts = cleaned.split(" ");
+  if (parts.length === 1) return { first: parts[0], last: "" };
+  return { first: parts[0], last: parts.slice(1).join(" ") };
 }
 
 export type StudentImportRow = {
@@ -84,9 +208,14 @@ export type StudentImportPreview = {
   duplicates: { row: number; existingId: number; data: StudentImportRow }[];
 };
 
+const DEFAULT_CATEGORY = "General";
+const DEFAULT_CENTRE = "Unknown";
+const DEFAULT_TEACHER = "Unknown";
+
 export function previewStudentImport(
   rows: ParsedRow[],
-  mapping: Record<StudentField, string | null>
+  mapping: Record<StudentField, string | null>,
+  defaults?: { category?: string; centre?: string; teacher?: string }
 ): StudentImportPreview {
   const d = db();
   const preview: StudentImportPreview = { valid: [], invalid: [], duplicates: [] };
@@ -94,39 +223,48 @@ export function previewStudentImport(
     "SELECT id FROM students WHERE lower(first_name) = lower(?) AND lower(last_name) = lower(?) AND dob = ?"
   );
 
+  const fallbackCat = (defaults?.category ?? "").trim() || DEFAULT_CATEGORY;
+  const fallbackCentre = (defaults?.centre ?? "").trim() || DEFAULT_CENTRE;
+  const fallbackTeacher = (defaults?.teacher ?? "").trim() || DEFAULT_TEACHER;
+
   rows.forEach((raw, idx) => {
-    const get = (f: StudentField) => {
-      const col = mapping[f];
+    const get = (col: string | null): string => {
       if (!col) return "";
       const v = raw[col];
       return v == null ? "" : String(v).trim();
     };
-    const first = get("first_name");
-    const last = get("last_name");
+
+    let first = get(mapping.first_name);
+    let last = get(mapping.last_name);
+
+    // If no separate first/last, try full_name
+    if ((!first || !last) && mapping.full_name) {
+      const full = get(mapping.full_name);
+      if (full) {
+        const split = splitFullName(full);
+        if (!first) first = split.first;
+        if (!last) last = split.last;
+      }
+    }
+
     const dobRaw = mapping.dob ? raw[mapping.dob] : "";
     const dob = normalizeDob(dobRaw);
-    const category = get("category");
-    const centre = get("centre");
-    const teacher = get("teacher");
+    const category = get(mapping.category) || fallbackCat;
+    const centre = get(mapping.centre) || fallbackCentre;
+    const teacher = get(mapping.teacher) || fallbackTeacher;
 
-    if (!first || !last) {
-      preview.invalid.push({ row: idx + 2, reason: "Missing first/last name", raw });
+    if (!first) {
+      preview.invalid.push({ row: idx + 2, reason: "Missing first name", raw });
+      return;
+    }
+    if (!last) {
+      // If only one word given, treat it as last="" — accept with last as "—"
+      // We require both to keep alphabetical sort meaningful
+      preview.invalid.push({ row: idx + 2, reason: "Could not determine last name", raw });
       return;
     }
     if (!dob) {
       preview.invalid.push({ row: idx + 2, reason: "Invalid or missing date of birth", raw });
-      return;
-    }
-    if (!category) {
-      preview.invalid.push({ row: idx + 2, reason: "Missing category", raw });
-      return;
-    }
-    if (!centre) {
-      preview.invalid.push({ row: idx + 2, reason: "Missing centre", raw });
-      return;
-    }
-    if (!teacher) {
-      preview.invalid.push({ row: idx + 2, reason: "Missing teacher", raw });
       return;
     }
 
@@ -141,10 +279,9 @@ export function previewStudentImport(
   return preview;
 }
 
-export function commitStudentImport(
-  preview: StudentImportPreview,
-  duplicateMode: ImportMode
-): { inserted: number; updated: number; skipped: number } {
+export type CommitResult = { inserted: number; updated: number; skipped: number };
+
+export function commitStudentImport(preview: StudentImportPreview, duplicateMode: ImportMode): CommitResult {
   const d = db();
   const ensureCat = d.prepare("INSERT OR IGNORE INTO categories (name) VALUES (?)");
   const findCat = d.prepare("SELECT id FROM categories WHERE name = ?");
@@ -155,7 +292,7 @@ export function commitStudentImport(
     "UPDATE students SET first_name = ?, last_name = ?, dob = ?, category_id = ?, centre = ?, teacher = ? WHERE id = ?"
   );
 
-  const upsert = d.transaction(() => {
+  const tx = d.transaction(() => {
     let inserted = 0;
     let updated = 0;
     let skipped = 0;
@@ -180,7 +317,7 @@ export function commitStudentImport(
     return { inserted, updated, skipped };
   });
 
-  return upsert();
+  return tx();
 }
 
 export type ScoreImportPreview = {
@@ -251,7 +388,16 @@ export function commitScoreImport(preview: ScoreImportPreview): { upserted: numb
   return tx();
 }
 
-export function leaderboardToWorkbook(rows: LeaderboardRow[], questionTypes: QuestionType[]): ArrayBuffer {
+export type ExportOptions = {
+  hideScores?: boolean;
+};
+
+export function leaderboardToWorkbook(
+  rows: LeaderboardRow[],
+  questionTypes: QuestionType[],
+  opts: ExportOptions = {}
+): ArrayBuffer {
+  const showScores = !opts.hideScores;
   const data: Record<string, string | number>[] = rows.map((r) => {
     const base: Record<string, string | number> = {
       Rank: r.rank,
@@ -262,25 +408,26 @@ export function leaderboardToWorkbook(rows: LeaderboardRow[], questionTypes: Que
       Centre: r.student.centre,
       Teacher: r.student.teacher,
     };
-    for (const qt of questionTypes) base[qt.name] = r.scoresByType[qt.id] ?? 0;
-    base["Total Score"] = r.totalScore;
-    base["Max Possible"] = r.maxPossibleScore;
-    base["Percentage"] = Math.round(r.percentage * 100) / 100;
-    base["Trophy Position"] = r.trophy ? `${r.trophy.icon ?? ""} ${r.trophy.name}`.trim() : "";
+    if (showScores) {
+      for (const qt of questionTypes) base[qt.name] = r.scoresByType[qt.id] ?? 0;
+      base["Total Score"] = r.totalScore;
+      base["Max Possible"] = r.maxPossibleScore;
+      base["Percentage"] = Math.round(r.percentage * 100) / 100;
+    }
+    base["Trophy"] = r.trophy ? `${r.trophy.icon ?? ""} ${r.trophy.name}`.trim() : "";
     return base;
   });
   const ws = XLSX.utils.json_to_sheet(data);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Leaderboard");
-  const out = XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
-  return out;
+  return XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
 }
 
 export function studentsToWorkbook(): ArrayBuffer {
   const d = db();
   const students = d
     .prepare(
-      `SELECT s.id, s.first_name, s.last_name, s.dob, c.name AS category, s.centre, s.teacher
+      `SELECT s.first_name, s.last_name, s.dob, c.name AS category, s.centre, s.teacher
        FROM students s JOIN categories c ON c.id = s.category_id
        ORDER BY c.name, s.last_name, s.first_name`
     )

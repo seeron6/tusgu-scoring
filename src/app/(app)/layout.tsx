@@ -7,10 +7,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (!session) redirect("/login");
 
   return (
-    <div className="min-h-screen flex bg-[#F8FAFC]">
+    <div className="min-h-screen flex bg-[#FAF9F5]">
       <Sidebar username={session.username} />
-      <main className="flex-1 min-w-0">
-        <div className="max-w-[1400px] mx-auto px-8 py-8">{children}</div>
+      <main className="flex-1 min-w-0 bg-[#FAF9F5]">
+        <div className="max-w-[1400px] mx-auto px-10 py-10">{children}</div>
       </main>
     </div>
   );

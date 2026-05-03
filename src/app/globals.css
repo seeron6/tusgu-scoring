@@ -1,19 +1,47 @@
 @import "tailwindcss";
 
 :root {
+  /* Brand */
   --tusgu-navy: #1B3A6B;
-  --tusgu-blue: #2563EB;
-  --tusgu-bg: #F8FAFC;
+  --tusgu-navy-hover: #152d54;
+  --tusgu-navy-soft: #2A4D80;
+
+  /* Surface system — warm, paper-like */
+  --tusgu-bg: #FAF9F5;
   --tusgu-surface: #FFFFFF;
-  --tusgu-text: #0F172A;
-  --tusgu-text-muted: #64748B;
-  --tusgu-border: #E2E8F0;
-  --tusgu-success: #16A34A;
-  --tusgu-warning: #D97706;
-  --tusgu-error: #DC2626;
-  --tusgu-gold: #FFD700;
-  --tusgu-silver: #C0C0C0;
-  --tusgu-bronze: #CD7F32;
+  --tusgu-surface-alt: #F5F2EB;
+  --tusgu-surface-sunken: #F0EDE3;
+
+  /* Borders */
+  --tusgu-border: #E8E3D7;
+  --tusgu-border-subtle: #F0EDE5;
+  --tusgu-border-strong: #D9D2BE;
+
+  /* Text — warm charcoal */
+  --tusgu-text: #1F1E1B;
+  --tusgu-text-secondary: #4A4843;
+  --tusgu-text-muted: #7A7770;
+  --tusgu-text-dim: #A8A39B;
+
+  /* Soft accent (selected nav, hover surfaces) */
+  --tusgu-accent-soft: #F4F1E8;
+  --tusgu-accent-soft-border: #E5DECF;
+
+  /* Status — muted to fit warm palette */
+  --tusgu-success: #5A8E54;
+  --tusgu-success-soft: #EEF4ED;
+  --tusgu-warning: #B8651A;
+  --tusgu-warning-soft: #FAF1E5;
+  --tusgu-error: #B8341A;
+  --tusgu-error-soft: #FAEEE9;
+
+  /* Trophies */
+  --tusgu-gold: #B8923B;
+  --tusgu-gold-soft: #FAF3DC;
+  --tusgu-silver: #8C8B86;
+  --tusgu-silver-soft: #F1F0EC;
+  --tusgu-bronze: #A0673B;
+  --tusgu-bronze-soft: #F6E9DC;
 }
 
 @theme inline {
@@ -21,13 +49,13 @@
   --color-foreground: var(--tusgu-text);
   --color-muted: var(--tusgu-text-muted);
   --color-navy: var(--tusgu-navy);
-  --color-tusgu-blue: var(--tusgu-blue);
   --color-surface: var(--tusgu-surface);
   --color-border: var(--tusgu-border);
   --color-success: var(--tusgu-success);
   --color-warning: var(--tusgu-warning);
   --color-error: var(--tusgu-error);
   --font-sans: var(--font-inter), Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-serif: var(--font-source-serif), "Source Serif 4", "Source Serif Pro", Georgia, "Times New Roman", serif;
 }
 
 html, body {
@@ -36,7 +64,16 @@ html, body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "ss01", "cv11";
 }
+
+h1, h2, h3, .font-serif {
+  font-family: var(--font-serif);
+  letter-spacing: -0.012em;
+}
+
+h1 { font-weight: 600; }
+h2, h3 { font-weight: 600; }
 
 @keyframes shake {
   0%,100% { transform: translateX(0); }
@@ -50,26 +87,49 @@ html, body {
   100% { background-position: 200% 0; }
 }
 .skeleton {
-  background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%);
+  background: linear-gradient(90deg, var(--tusgu-surface-alt) 25%, var(--tusgu-surface-sunken) 50%, var(--tusgu-surface-alt) 75%);
   background-size: 200% 100%;
-  animation: skeleton 1.4s ease-in-out infinite;
-  border-radius: 6px;
+  animation: skeleton 1.6s ease-in-out infinite;
+  border-radius: 4px;
 }
 
-.modal-backdrop { backdrop-filter: blur(4px); background: rgba(15, 23, 42, 0.45); }
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in { animation: fade-in 0.2s ease-out; }
 
+.modal-backdrop {
+  backdrop-filter: blur(8px) saturate(140%);
+  background: rgba(31, 30, 27, 0.32);
+}
+
+/* Tables — typographic, calm */
 table.tusgu-table { width: 100%; border-collapse: collapse; }
 table.tusgu-table thead th {
-  position: sticky; top: 0;
-  background: #F1F5F9; color: var(--tusgu-text);
-  font-weight: 600; font-size: 0.8rem;
-  text-align: left; padding: 0.75rem 1rem;
+  position: sticky; top: 0; z-index: 1;
+  background: var(--tusgu-surface);
+  color: var(--tusgu-text-secondary);
+  font-weight: 500; font-size: 0.7rem;
+  text-align: left; padding: 0.75rem 1.25rem;
   border-bottom: 1px solid var(--tusgu-border);
-  text-transform: uppercase; letter-spacing: 0.04em;
+  text-transform: uppercase; letter-spacing: 0.08em;
 }
 table.tusgu-table tbody td {
-  padding: 0.75rem 1rem; border-bottom: 1px solid var(--tusgu-border);
+  padding: 0.875rem 1.25rem;
+  border-bottom: 1px solid var(--tusgu-border-subtle);
   font-size: 0.875rem;
+  color: var(--tusgu-text);
 }
-table.tusgu-table tbody tr:nth-child(even) { background: #FAFBFC; }
-table.tusgu-table tbody tr:hover { background: #EFF6FF; }
+table.tusgu-table tbody tr { transition: background-color 120ms ease; }
+table.tusgu-table tbody tr:hover { background: var(--tusgu-surface-alt); }
+table.tusgu-table tbody tr:last-child td { border-bottom: none; }
+
+/* Subtle scrollbar */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--tusgu-border-strong); border-radius: 6px; border: 2px solid var(--tusgu-bg); }
+*::-webkit-scrollbar-thumb:hover { background: var(--tusgu-text-dim); }
+
+/* Selection */
+::selection { background: var(--tusgu-accent-soft); color: var(--tusgu-text); }

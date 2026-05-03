@@ -65,11 +65,11 @@ function CategoriesCard() {
   }
 
   return (
-    <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-sm overflow-hidden">
-      <div className="px-5 py-4 border-b border-[#E2E8F0] flex items-center justify-between">
+    <div className="bg-white rounded-xl border border-[#E8E3D7] shadow-sm overflow-hidden">
+      <div className="px-5 py-4 border-b border-[#E8E3D7] flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Layers className="w-4 h-4 text-[#1B3A6B]" />
-          <h2 className="text-sm font-semibold text-[#0F172A]">Competition Categories</h2>
+          <h2 className="text-sm font-semibold text-[#1F1E1B]">Competition Categories</h2>
         </div>
         <Button
           size="sm"
@@ -113,7 +113,7 @@ function CategoriesCard() {
             {items.map((c) => (
               <tr key={c.id}>
                 <td className="font-medium">{c.name}</td>
-                <td className="text-[#64748B]">{c.description || "—"}</td>
+                <td className="text-[#7A7770]">{c.description || "—"}</td>
                 <td>
                   <div className="flex gap-1">
                     <Button
@@ -127,7 +127,7 @@ function CategoriesCard() {
                       <Pencil className="w-3.5 h-3.5" />
                     </Button>
                     <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(c)}>
-                      <Trash2 className="w-3.5 h-3.5 text-[#DC2626]" />
+                      <Trash2 className="w-3.5 h-3.5 text-[#B8341A]" />
                     </Button>
                   </div>
                 </td>
@@ -262,11 +262,11 @@ function QuestionTypesCard() {
   const totalMax = items?.reduce((sum, q) => sum + q.points_per_question * q.max_questions, 0) ?? 0;
 
   return (
-    <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-sm overflow-hidden">
-      <div className="px-5 py-4 border-b border-[#E2E8F0] flex items-center justify-between">
+    <div className="bg-white rounded-xl border border-[#E8E3D7] shadow-sm overflow-hidden">
+      <div className="px-5 py-4 border-b border-[#E8E3D7] flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Calculator className="w-4 h-4 text-[#1B3A6B]" />
-          <h2 className="text-sm font-semibold text-[#0F172A]">Question Types (Mental Math)</h2>
+          <h2 className="text-sm font-semibold text-[#1F1E1B]">Question Types (Mental Math)</h2>
         </div>
         <Button
           size="sm"
@@ -319,7 +319,7 @@ function QuestionTypesCard() {
                         <Pencil className="w-3.5 h-3.5" />
                       </Button>
                       <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(q)}>
-                        <Trash2 className="w-3.5 h-3.5 text-[#DC2626]" />
+                        <Trash2 className="w-3.5 h-3.5 text-[#B8341A]" />
                       </Button>
                     </div>
                   </td>
@@ -327,8 +327,8 @@ function QuestionTypesCard() {
               ))}
             </tbody>
           </table>
-          <div className="px-5 py-3 bg-[#EFF6FF] border-t border-[#E2E8F0] text-sm flex items-center justify-between">
-            <span className="text-[#64748B]">Total max possible score</span>
+          <div className="px-5 py-3 bg-[#F4F1E8] border-t border-[#E8E3D7] text-sm flex items-center justify-between">
+            <span className="text-[#7A7770]">Total max possible score</span>
             <span className="text-lg font-bold text-[#1B3A6B]">{totalMax}</span>
           </div>
         </>
@@ -427,8 +427,8 @@ function QuestionTypeModal({
             />
           </div>
         </div>
-        <div className="text-xs text-[#64748B] bg-slate-50 rounded p-3">
-          Max possible score for this type: <strong className="text-[#0F172A]">{points * max}</strong>
+        <div className="text-xs text-[#7A7770] bg-[#F5F2EB] rounded p-3">
+          Max possible score for this type: <strong className="text-[#1F1E1B]">{points * max}</strong>
         </div>
       </div>
     </Modal>

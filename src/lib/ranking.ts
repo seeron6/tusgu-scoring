@@ -90,6 +90,7 @@ export function totalForStudent(
  * Canonical rank within a category:
  *   1) total score DESC
  *   2) DOB DESC (younger student wins ties)
+ *   3) Last name ASC, then first name ASC (alphabetical tertiary tiebreaker)
  */
 export function sortByCanonicalRank(
   students: StudentWithCategory[],
@@ -100,8 +101,45 @@ export function sortByCanonicalRank(
     const tb = totalForStudent(b.id, scoresByStudent);
     if (tb !== ta) return tb - ta;
     // younger first => later DOB ranks higher
-    return new Date(b.dob).getTime() - new Date(a.dob).getTime();
+    const dobDiff = new Date(b.dob).getTime() - new Date(a.dob).getTime();
+    if (dobDiff !== 0) return dobDiff;
+    // Tertiary: alphabetical (last name, then first)
+    const lastCmp = a.last_name.localeCompare(b.last_name, undefined, { sensitivity: "base" });
+    if (lastCmp !== 0) return lastCmp;
+    return a.first_name.localeCompare(b.first_name, undefined, { sensitivity: "base" });
   });
+}
+
+/**
+ * Group rows by trophy. Within each trophy band, sort alphabetically (last name, first name).
+ * Used for awards display / certificate-style listings.
+ */
+export function groupByTrophyAlphabetical(rows: LeaderboardRow[]): {
+  trophy: import("./types").TrophyType | null;
+  rows: LeaderboardRow[];
+}[] {
+  const map = new Map<string, { trophy: import("./types").TrophyType | null; rows: LeaderboardRow[] }>();
+  for (const r of rows) {
+    const key = r.trophy ? `${r.trophy.display_order}:${r.trophy.id}` : "zzz:none";
+    if (!map.has(key)) map.set(key, { trophy: r.trophy, rows: [] });
+    map.get(key)!.rows.push(r);
+  }
+  // Sort by trophy display_order; null trophies last
+  const groups = Array.from(map.values()).sort((a, b) => {
+    if (!a.trophy && !b.trophy) return 0;
+    if (!a.trophy) return 1;
+    if (!b.trophy) return -1;
+    return a.trophy.display_order - b.trophy.display_order;
+  });
+  // Sort each group alphabetically by last name, then first name
+  for (const g of groups) {
+    g.rows.sort((a, b) => {
+      const ln = a.student.last_name.localeCompare(b.student.last_name, undefined, { sensitivity: "base" });
+      if (ln !== 0) return ln;
+      return a.student.first_name.localeCompare(b.student.first_name, undefined, { sensitivity: "base" });
+    });
+  }
+  return groups;
 }
 
 function computeTrophyAssignments(

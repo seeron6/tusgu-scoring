@@ -7,6 +7,7 @@ export function Modal({
   open,
   onClose,
   title,
+  description,
   children,
   footer,
   width = "max-w-md",
@@ -14,6 +15,7 @@ export function Modal({
   open: boolean;
   onClose: () => void;
   title: string;
+  description?: string;
   children: React.ReactNode;
   footer?: React.ReactNode;
   width?: string;
@@ -24,24 +26,42 @@ export function Modal({
       if (e.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
   }, [open, onClose]);
 
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop p-4" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center modal-backdrop p-4 animate-fade-in"
+      onClick={onClose}
+    >
       <div
-        className={`w-full ${width} bg-white rounded-xl shadow-2xl border border-[#E2E8F0] overflow-hidden`}
+        className={`w-full ${width} bg-white rounded-2xl shadow-[0_24px_60px_-12px_rgba(31,30,27,0.20)] border border-[#E8E3D7] overflow-hidden`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-[#E2E8F0]">
-          <h2 className="text-base font-semibold text-[#0F172A]">{title}</h2>
-          <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close">
+        <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-4 border-b border-[#F0EDE5]">
+          <div>
+            <h2 className="font-serif text-[17px] font-semibold text-[#1F1E1B] tracking-tight leading-snug">
+              {title}
+            </h2>
+            {description && <p className="text-[13px] text-[#7A7770] mt-1 leading-relaxed">{description}</p>}
+          </div>
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="text-[#7A7770] hover:text-[#1F1E1B] hover:bg-[#F4F1E8] rounded-md p-1.5 transition-colors -mr-1.5 mt-0.5"
+          >
             <X className="w-4 h-4" />
-          </Button>
+          </button>
         </div>
-        <div className="px-5 py-4">{children}</div>
-        {footer && <div className="px-5 py-3 border-t border-[#E2E8F0] bg-slate-50 flex justify-end gap-2">{footer}</div>}
+        <div className="px-6 py-5">{children}</div>
+        {footer && (
+          <div className="px-6 py-4 border-t border-[#F0EDE5] bg-[#FAF9F5] flex justify-end gap-2">{footer}</div>
+        )}
       </div>
     </div>
   );
@@ -93,7 +113,7 @@ export function ConfirmDialog({
         </>
       }
     >
-      <p className="text-sm text-[#64748B]">{message}</p>
+      <p className="text-sm text-[#4A4843] leading-relaxed">{message}</p>
     </Modal>
   );
 }

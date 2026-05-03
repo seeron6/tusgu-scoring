@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 import { buildLeaderboard } from "@/lib/ranking";
 import { leaderboardToWorkbook } from "@/lib/excel";
+import { leaderboardToPdf } from "@/lib/pdf";
 import { db } from "@/lib/db";
 import type { QuestionType } from "@/lib/types";
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
   const applyTrophies = url.searchParams.get("trophies") === "1";
+  const hideScores = url.searchParams.get("hide_scores") === "1";
+  const format = (url.searchParams.get("format") ?? "xlsx").toLowerCase();
   const categoryFilter = url.searchParams.get("categories")?.split(",").filter(Boolean);
   const centreFilter = url.searchParams.get("centres")?.split(",").filter(Boolean);
   const teacherFilter = url.searchParams.get("teachers")?.split(",").filter(Boolean);
@@ -20,18 +23,30 @@ export async function GET(req: Request) {
     rows = rows.filter((r) => centreFilter.includes(r.student.centre));
   if (teacherFilter && teacherFilter.length)
     rows = rows.filter((r) => teacherFilter.includes(r.student.teacher));
-  if (minScore != null) rows = rows.filter((r) => r.totalScore >= Number(minScore));
-  if (maxScore != null) rows = rows.filter((r) => r.totalScore <= Number(maxScore));
+  if (minScore != null && minScore !== "") rows = rows.filter((r) => r.totalScore >= Number(minScore));
+  if (maxScore != null && maxScore !== "") rows = rows.filter((r) => r.totalScore <= Number(maxScore));
 
   const qts = db()
     .prepare("SELECT * FROM question_types ORDER BY display_order ASC, id ASC")
     .all() as QuestionType[];
 
-  const buf = leaderboardToWorkbook(rows, qts);
+  const stamp = new Date().toISOString().slice(0, 10);
+
+  if (format === "pdf") {
+    const buf = leaderboardToPdf(rows, qts, { hideScores });
+    return new NextResponse(buf, {
+      headers: {
+        "content-type": "application/pdf",
+        "content-disposition": `attachment; filename="tusgu-leaderboard-${stamp}.pdf"`,
+      },
+    });
+  }
+
+  const buf = leaderboardToWorkbook(rows, qts, { hideScores });
   return new NextResponse(buf, {
     headers: {
       "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "content-disposition": `attachment; filename="tusgu-leaderboard-${new Date().toISOString().slice(0, 10)}.xlsx"`,
+      "content-disposition": `attachment; filename="tusgu-leaderboard-${stamp}.xlsx"`,
     },
   });
 }

@@ -105,10 +105,10 @@ export default function StudentsPage() {
         }
       />
 
-      <div className="bg-white rounded-xl border border-[#E2E8F0] shadow-sm overflow-hidden">
-        <div className="px-5 py-3 border-b border-[#E2E8F0] flex items-center gap-3">
+      <div className="bg-white rounded-xl border border-[#E8E3D7] shadow-sm overflow-hidden">
+        <div className="px-5 py-3 border-b border-[#E8E3D7] flex items-center gap-3">
           <div className="relative flex-1 max-w-sm">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
+            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#A8A39B]" />
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -116,7 +116,7 @@ export default function StudentsPage() {
               className="pl-9"
             />
           </div>
-          <div className="text-sm text-[#64748B] ml-auto">
+          <div className="text-sm text-[#7A7770] ml-auto">
             {filtered.length} student{filtered.length !== 1 ? "s" : ""}
           </div>
           <Select value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))} className="w-24">
@@ -170,10 +170,10 @@ export default function StudentsPage() {
                       <td className="font-medium">
                         {s.first_name} {s.last_name}
                       </td>
-                      <td className="text-[#64748B]">{formatDate(s.dob)}</td>
+                      <td className="text-[#7A7770]">{formatDate(s.dob)}</td>
                       <td>{calculateAge(s.dob)}</td>
                       <td>
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-[#EFF6FF] text-[#1B3A6B]">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-[#F4F1E8] text-[#1B3A6B]">
                           {s.category_name}
                         </span>
                       </td>
@@ -192,7 +192,7 @@ export default function StudentsPage() {
                             <Pencil className="w-3.5 h-3.5" />
                           </Button>
                           <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(s)}>
-                            <Trash2 className="w-3.5 h-3.5 text-[#DC2626]" />
+                            <Trash2 className="w-3.5 h-3.5 text-[#B8341A]" />
                           </Button>
                         </div>
                       </td>
@@ -201,8 +201,8 @@ export default function StudentsPage() {
                 </tbody>
               </table>
             </div>
-            <div className="px-5 py-3 border-t border-[#E2E8F0] flex items-center justify-between">
-              <div className="text-xs text-[#64748B]">
+            <div className="px-5 py-3 border-t border-[#E8E3D7] flex items-center justify-between">
+              <div className="text-xs text-[#7A7770]">
                 Page {page} of {totalPages}
               </div>
               <div className="flex gap-1">
@@ -314,7 +314,7 @@ function StudentModal({
       }
     >
       {categories.length === 0 ? (
-        <div className="text-sm text-[#D97706] bg-amber-50 border border-amber-200 rounded p-3">
+        <div className="text-sm text-[#B8651A] bg-[#FAF1E5] border border-[#F0DEB8] rounded p-3">
           You need to create at least one category in Setup before adding students.
         </div>
       ) : (
@@ -388,6 +388,7 @@ function ImportModal({
   const [mapping, setMapping] = useState<Record<StudentField, string | null>>({
     first_name: null,
     last_name: null,
+    full_name: null,
     dob: null,
     category: null,
     centre: null,
@@ -403,7 +404,7 @@ function ImportModal({
     setFile(null);
     setData(null);
     setResult(null);
-    setMapping({ first_name: null, last_name: null, dob: null, category: null, centre: null, teacher: null });
+    setMapping({ first_name: null, last_name: null, full_name: null, dob: null, category: null, centre: null, teacher: null });
   }
 
   async function uploadFile(f: File) {
@@ -513,11 +514,11 @@ function ImportModal({
               }
             }}
             onDragOver={(e) => e.preventDefault()}
-            className="border-2 border-dashed border-[#CBD5E1] hover:border-[#2563EB] hover:bg-[#EFF6FF] rounded-lg p-10 text-center cursor-pointer transition-colors"
+            className="border-2 border-dashed border-[#D9D2BE] hover:border-[#1B3A6B] hover:bg-[#F4F1E8] rounded-lg p-10 text-center cursor-pointer transition-colors"
           >
-            <Upload className="w-10 h-10 mx-auto text-[#94A3B8] mb-3" />
-            <div className="text-sm font-medium text-[#0F172A] mb-1">Drop your Excel file here</div>
-            <div className="text-xs text-[#64748B]">or click to browse (.xlsx, .xls)</div>
+            <Upload className="w-10 h-10 mx-auto text-[#A8A39B] mb-3" />
+            <div className="text-sm font-medium text-[#1F1E1B] mb-1">Drop your Excel file here</div>
+            <div className="text-xs text-[#7A7770]">or click to browse (.xlsx, .xls)</div>
             <input
               ref={inputRef}
               type="file"
@@ -531,10 +532,10 @@ function ImportModal({
                 }
               }}
             />
-            {file && <div className="text-xs text-[#64748B] mt-3">{file.name}</div>}
+            {file && <div className="text-xs text-[#7A7770] mt-3">{file.name}</div>}
           </div>
-          <div className="text-xs text-[#64748B] bg-slate-50 border border-[#E2E8F0] rounded p-3">
-            <strong className="text-[#0F172A]">Expected columns:</strong> First Name, Last Name, Date of Birth, Category,
+          <div className="text-xs text-[#7A7770] bg-[#F5F2EB] border border-[#E8E3D7] rounded p-3">
+            <strong className="text-[#1F1E1B]">Expected columns:</strong> First Name, Last Name, Date of Birth, Category,
             Centre, Teacher. Column names don&apos;t need to match exactly — they&apos;ll be auto-detected and you can adjust the
             mapping in the next step.
           </div>
@@ -543,8 +544,8 @@ function ImportModal({
 
       {stage === "map" && data && (
         <div className="space-y-4">
-          <div className="text-sm text-[#64748B]">
-            Detected <strong className="text-[#0F172A]">{data.rowCount}</strong> rows. Confirm column mapping:
+          <div className="text-sm text-[#7A7770]">
+            Detected <strong className="text-[#1F1E1B]">{data.rowCount}</strong> rows. Confirm column mapping:
           </div>
           <div className="grid grid-cols-2 gap-3">
             {STUDENT_FIELDS.map((f) => (
@@ -564,9 +565,9 @@ function ImportModal({
               </div>
             ))}
           </div>
-          <details className="text-xs text-[#64748B]">
-            <summary className="cursor-pointer text-[#0F172A] font-medium mb-2">Preview first 5 rows</summary>
-            <div className="overflow-x-auto mt-2 border border-[#E2E8F0] rounded">
+          <details className="text-xs text-[#7A7770]">
+            <summary className="cursor-pointer text-[#1F1E1B] font-medium mb-2">Preview first 5 rows</summary>
+            <div className="overflow-x-auto mt-2 border border-[#E8E3D7] rounded">
               <table className="tusgu-table">
                 <thead>
                   <tr>
@@ -593,13 +594,13 @@ function ImportModal({
       {stage === "confirm" && data && (
         <div className="space-y-4">
           <div className="grid grid-cols-3 gap-3">
-            <Stat label="Valid" value={data.preview.valid.length} color="text-[#16A34A]" />
-            <Stat label="Duplicates" value={data.preview.duplicates.length} color="text-[#D97706]" />
-            <Stat label="Invalid" value={data.preview.invalid.length} color="text-[#DC2626]" />
+            <Stat label="Valid" value={data.preview.valid.length} color="text-[#5A8E54]" />
+            <Stat label="Duplicates" value={data.preview.duplicates.length} color="text-[#B8651A]" />
+            <Stat label="Invalid" value={data.preview.invalid.length} color="text-[#B8341A]" />
           </div>
           {data.preview.duplicates.length > 0 && (
-            <div className="border border-amber-200 bg-amber-50 rounded p-3">
-              <div className="text-sm font-medium text-[#0F172A] mb-2">Duplicates detected (matched on name + DOB)</div>
+            <div className="border border-[#F0DEB8] bg-[#FAF1E5] rounded p-3">
+              <div className="text-sm font-medium text-[#1F1E1B] mb-2">Duplicates detected (matched on name + DOB)</div>
               <div className="flex gap-3 text-sm">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
@@ -622,10 +623,10 @@ function ImportModal({
           )}
           {data.preview.invalid.length > 0 && (
             <details className="text-sm">
-              <summary className="cursor-pointer text-[#DC2626] font-medium">
+              <summary className="cursor-pointer text-[#B8341A] font-medium">
                 {data.preview.invalid.length} invalid rows will be skipped
               </summary>
-              <ul className="mt-2 max-h-40 overflow-y-auto text-xs text-[#64748B] space-y-1 list-disc list-inside">
+              <ul className="mt-2 max-h-40 overflow-y-auto text-xs text-[#7A7770] space-y-1 list-disc list-inside">
                 {data.preview.invalid.slice(0, 30).map((iv, i) => (
                   <li key={i}>
                     Row {iv.row}: {iv.reason}
@@ -634,7 +635,7 @@ function ImportModal({
               </ul>
             </details>
           )}
-          <div className="text-xs text-[#64748B]">
+          <div className="text-xs text-[#7A7770]">
             Categories not yet present will be created automatically.
           </div>
         </div>
@@ -643,8 +644,8 @@ function ImportModal({
       {stage === "done" && result && (
         <div className="text-center py-6">
           <div className="text-4xl mb-2">✓</div>
-          <div className="text-base font-semibold text-[#0F172A] mb-1">Import complete</div>
-          <div className="text-sm text-[#64748B]">
+          <div className="text-base font-semibold text-[#1F1E1B] mb-1">Import complete</div>
+          <div className="text-sm text-[#7A7770]">
             {result.inserted} added · {result.updated} updated · {result.skipped} skipped · {result.invalid} invalid
           </div>
         </div>
@@ -655,9 +656,9 @@ function ImportModal({
 
 function Stat({ label, value, color }: { label: string; value: number; color: string }) {
   return (
-    <div className="bg-slate-50 border border-[#E2E8F0] rounded p-3 text-center">
+    <div className="bg-[#F5F2EB] border border-[#E8E3D7] rounded p-3 text-center">
       <div className={`text-2xl font-bold ${color}`}>{value}</div>
-      <div className="text-xs text-[#64748B] uppercase tracking-wide mt-1">{label}</div>
+      <div className="text-xs text-[#7A7770] uppercase tracking-wide mt-1">{label}</div>
     </div>
   );
 }
@@ -666,10 +667,12 @@ function labelFor(f: StudentField): string {
   const map: Record<StudentField, string> = {
     first_name: "First Name",
     last_name: "Last Name",
+    full_name: "Full Name (combined)",
     dob: "Date of Birth",
     category: "Category",
     centre: "Centre",
     teacher: "Teacher",
   };
-  return map[f] + " *";
+  const optional = f === "full_name" ? "" : " *";
+  return map[f] + optional;
 }
