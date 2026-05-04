@@ -1,6 +1,6 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
-import type { LeaderboardRow, QuestionType } from "./types";
+import type { LeaderboardRow, QuestionType, TrophyType } from "./types";
 import { groupByTrophyAlphabetical } from "./ranking";
 
 const NAVY: [number, number, number] = [27, 58, 107];
@@ -8,6 +8,12 @@ const TEXT: [number, number, number] = [31, 30, 27];
 const MUTED: [number, number, number] = [122, 119, 112];
 const BORDER: [number, number, number] = [232, 227, 215];
 const BG_ALT: [number, number, number] = [250, 249, 245];
+
+export type PdfOptions = {
+  hideScores?: boolean;
+  title?: string;
+  subtitle?: string;
+};
 
 /**
  * jsPDF's built-in fonts (Helvetica/Times/Courier) don't carry emoji glyphs,
@@ -17,7 +23,6 @@ const BG_ALT: [number, number, number] = [250, 249, 245];
 function stripEmoji(s: string): string {
   if (!s) return s;
   return s
-    // Common emoji ranges + variation selector
     .replace(
       /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F000}-\u{1F02F}\u{1F0A0}-\u{1F0FF}\u{2300}-\u{23FF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/gu,
       ""
@@ -25,12 +30,6 @@ function stripEmoji(s: string): string {
     .replace(/\s+/g, " ")
     .trim();
 }
-
-export type PdfOptions = {
-  hideScores?: boolean;
-  title?: string;
-  subtitle?: string;
-};
 
 function header(doc: jsPDF, title: string, subtitle?: string) {
   doc.setTextColor(...NAVY);
@@ -40,7 +39,7 @@ function header(doc: jsPDF, title: string, subtitle?: string) {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   doc.setTextColor(...MUTED);
-  doc.text("Educational Services — Competition Portal", 80, 50);
+  doc.text("Educational Services - Competition Portal", 80, 50);
 
   doc.setTextColor(...TEXT);
   doc.setFont("helvetica", "bold");
@@ -69,6 +68,11 @@ function footer(doc: jsPDF) {
     doc.text(`Page ${p} of ${pages}`, w - 40, h - 22, { align: "right" });
   }
 }
+
+// =============================================================
+// Leaderboard PDF — split by category, table is Rank/Name/Scores/Total/Trophy
+// (full ranked listing). Used for the "Leaderboard with score" export.
+// =============================================================
 
 export function leaderboardToPdf(
   rows: LeaderboardRow[],
@@ -120,7 +124,7 @@ export function leaderboardToPdf(
         arr.push(r.totalScore, `${r.percentage.toFixed(1)}%`);
       }
       arr.push(
-        r.trophy ? stripEmoji(r.trophy.name) : "—",
+        r.trophy ? stripEmoji(r.trophy.name) : "-",
         r.student.dob ?? "",
         r.age ?? "",
         r.student.centre ?? "",
@@ -154,17 +158,27 @@ export function leaderboardToPdf(
   return doc.output("arraybuffer") as ArrayBuffer;
 }
 
+// =============================================================
+// Awards PDF — by category, by trophy band, alphabetical within band.
+// Only includes students who actually won a trophy (no participation row).
+// Columns: Name, Trophy, Centre, Teacher.
+// This is what "Leaderboard with trophies, no scores" exports.
+// =============================================================
+
 export function awardsToPdf(rows: LeaderboardRow[], opts: PdfOptions = {}): ArrayBuffer {
   const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
-  const showScores = !opts.hideScores;
   header(
     doc,
     opts.title ?? "Awards & Trophies",
-    opts.subtitle ?? "Winners are listed alphabetically within each award."
+    opts.subtitle ?? "Winners listed alphabetically within each trophy band."
   );
 
+  // Drop everyone who isn't a winner BEFORE grouping so empty categories
+  // don't leak through.
+  const winners = rows.filter((r) => r.trophy != null);
+
   const byCat = new Map<string, LeaderboardRow[]>();
-  for (const r of rows) {
+  for (const r of winners) {
     const cat = r.student.category ?? "(uncategorised)";
     if (!byCat.has(cat)) byCat.set(cat, []);
     byCat.get(cat)!.push(r);
@@ -175,11 +189,21 @@ export function awardsToPdf(rows: LeaderboardRow[], opts: PdfOptions = {}): Arra
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
 
+  if (cats.length === 0) {
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(11);
+    doc.setTextColor(...MUTED);
+    doc.text("No trophy winners yet. Configure trophy quantities on the Awards page first.", 40, y);
+    footer(doc);
+    return doc.output("arraybuffer") as ArrayBuffer;
+  }
+
   for (const [cat, list] of cats) {
     if (y > pageH - 140) {
       doc.addPage();
       y = 50;
     }
+    // Category banner
     doc.setFillColor(...NAVY);
     doc.rect(40, y, pageW - 80, 26, "F");
     doc.setFont("helvetica", "bold");
@@ -188,11 +212,13 @@ export function awardsToPdf(rows: LeaderboardRow[], opts: PdfOptions = {}): Arra
     doc.text(cat.toUpperCase(), 52, y + 17);
     y += 38;
 
+    // Group winners by trophy, sort each group alphabetically by full_name.
+    // groupByTrophyAlphabetical already does this.
     const groups = groupByTrophyAlphabetical(list);
-    let hasAnyTrophy = false;
+
+    // Build one autoTable per trophy band so the band heading sticks with its rows.
     for (const g of groups) {
       if (!g.trophy || g.rows.length === 0) continue;
-      hasAnyTrophy = true;
       if (y > pageH - 100) {
         doc.addPage();
         y = 50;
@@ -212,18 +238,13 @@ export function awardsToPdf(rows: LeaderboardRow[], opts: PdfOptions = {}): Arra
       );
       y += 8;
 
-      const head = showScores
-        ? [["Name", "DOB", "Centre", "Teacher", "Score"]]
-        : [["Name", "DOB", "Centre", "Teacher"]];
-      const body = g.rows.map((r) => {
-        const base = [
-          r.student.full_name,
-          r.student.dob ?? "",
-          r.student.centre ?? "",
-          r.student.teacher ?? "",
-        ];
-        return showScores ? [...base, String(r.totalScore)] : base;
-      });
+      const head = [["Name", "Trophy", "Centre", "Teacher"]];
+      const body = g.rows.map((r) => [
+        r.student.full_name,
+        stripEmoji(g.trophy!.name),
+        r.student.centre ?? "",
+        r.student.teacher ?? "",
+      ]);
 
       autoTable(doc, {
         head,
@@ -240,24 +261,155 @@ export function awardsToPdf(rows: LeaderboardRow[], opts: PdfOptions = {}): Arra
         },
         headStyles: { fillColor: BG_ALT, textColor: MUTED, fontStyle: "bold", fontSize: 7.5 },
         alternateRowStyles: { fillColor: [255, 255, 255] },
-        columnStyles: {
-          0: { fontStyle: "bold" },
-          ...(showScores ? { 4: { halign: "right", fontStyle: "bold" } } : {}),
-        },
+        columnStyles: { 0: { fontStyle: "bold" } },
       });
       // @ts-expect-error autoTable adds lastAutoTable
       y = (doc.lastAutoTable?.finalY ?? y) + 22;
     }
 
-    if (!hasAnyTrophy) {
-      doc.setFont("helvetica", "italic");
-      doc.setFontSize(9);
-      doc.setTextColor(...MUTED);
-      doc.text("No trophies allocated for this category.", 50, y);
-      y += 22;
-    }
     y += 12;
   }
+
+  footer(doc);
+  return doc.output("arraybuffer") as ArrayBuffer;
+}
+
+// =============================================================
+// Coaches / Centres PDF — leaderboard by teacher or by centre.
+// =============================================================
+
+export type CoachRow = {
+  key: string;
+  centres?: string[]; // teacher mode only
+  studentCount: number;
+  totalTrophies: number;
+  totalPoints: number;
+  trophyCounts: Record<number, number>; // trophy_type_id -> count
+};
+
+export function coachesToPdf(
+  rows: CoachRow[],
+  trophyTypes: TrophyType[],
+  mode: "teachers" | "centres",
+  opts: PdfOptions = {}
+): ArrayBuffer {
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+  const sortedTrophies = [...trophyTypes].sort((a, b) => a.display_order - b.display_order);
+  const subjectLabel = mode === "teachers" ? "Teacher (CI)" : "Centre";
+  header(
+    doc,
+    opts.title ?? (mode === "teachers" ? "Teacher (CI) Leaderboard" : "Centre Leaderboard"),
+    opts.subtitle ?? "Ranked by total trophy points."
+  );
+
+  const head: string[] = ["#", subjectLabel];
+  if (mode === "teachers") head.push("Centres");
+  head.push("Students");
+  for (const t of sortedTrophies) head.push(t.name.replace("Runner Up", "RU"));
+  head.push("Trophies", "Points");
+
+  const body = rows.map((r, i) => {
+    const arr: (string | number)[] = [i + 1, r.key];
+    if (mode === "teachers") arr.push((r.centres ?? []).join(", "));
+    arr.push(r.studentCount);
+    for (const t of sortedTrophies) arr.push(r.trophyCounts[t.id] ?? 0);
+    arr.push(r.totalTrophies, r.totalPoints);
+    return arr;
+  });
+
+  autoTable(doc, {
+    head: [head],
+    body,
+    startY: 140,
+    margin: { left: 40, right: 40 },
+    styles: {
+      font: "helvetica",
+      fontSize: 8.5,
+      cellPadding: 5,
+      textColor: TEXT,
+      lineColor: BORDER,
+      lineWidth: 0.4,
+    },
+    headStyles: { fillColor: BG_ALT, textColor: MUTED, fontStyle: "bold", fontSize: 7.5 },
+    alternateRowStyles: { fillColor: [255, 255, 255] },
+    columnStyles: {
+      0: { cellWidth: 24, halign: "center", fontStyle: "bold" },
+    },
+  });
+
+  footer(doc);
+  return doc.output("arraybuffer") as ArrayBuffer;
+}
+
+// =============================================================
+// Students roster PDF — basic info or with scores.
+// =============================================================
+
+export type RosterPdfOptions = PdfOptions & {
+  withScores?: boolean;
+  questionTypes?: QuestionType[];
+  scoresByStudent?: Map<number, Record<number, number>>;
+};
+
+export function studentsToPdf(
+  students: import("./types").Student[],
+  opts: RosterPdfOptions = {}
+): ArrayBuffer {
+  const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+  header(
+    doc,
+    opts.title ?? (opts.withScores ? "Student Roster with Scores" : "Student Roster"),
+    opts.subtitle ?? `${students.length} students`
+  );
+
+  const head: string[] = ["#", "Name", "Code", "DOB", "Gender", "Category", "Centre", "Teacher"];
+  if (opts.withScores && opts.questionTypes) {
+    for (const qt of opts.questionTypes) head.push(qt.name);
+    head.push("Total");
+  }
+
+  const body = students.map((s, i) => {
+    const arr: (string | number)[] = [
+      i + 1,
+      s.full_name,
+      s.student_code ?? s.exam_code ?? "",
+      s.dob ?? "",
+      s.gender ?? "",
+      s.category ?? "",
+      s.centre ?? "",
+      s.teacher ?? "",
+    ];
+    if (opts.withScores && opts.questionTypes && opts.scoresByStudent) {
+      const scores = opts.scoresByStudent.get(s.id) ?? {};
+      let total = 0;
+      for (const qt of opts.questionTypes) {
+        const correct = scores[qt.id] ?? 0;
+        const pts = correct * qt.points_per_question;
+        arr.push(pts);
+        total += pts;
+      }
+      arr.push(total);
+    }
+    return arr;
+  });
+
+  autoTable(doc, {
+    head: [head],
+    body,
+    startY: 140,
+    margin: { left: 40, right: 40 },
+    styles: {
+      font: "helvetica",
+      fontSize: 8.5,
+      cellPadding: 4,
+      textColor: TEXT,
+      lineColor: BORDER,
+      lineWidth: 0.4,
+    },
+    headStyles: { fillColor: BG_ALT, textColor: MUTED, fontStyle: "bold", fontSize: 7.5 },
+    alternateRowStyles: { fillColor: [255, 255, 255] },
+    columnStyles: { 0: { cellWidth: 22, halign: "center", fontStyle: "bold" } },
+  });
 
   footer(doc);
   return doc.output("arraybuffer") as ArrayBuffer;

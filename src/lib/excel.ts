@@ -526,6 +526,7 @@ export function studentsToWorkbook(students: Student[]): ArrayBuffer {
       "Exam Code": s.exam_code ?? "",
       "Full Name": s.full_name,
       "Date of Birth": s.dob ?? "",
+      Gender: s.gender ?? "",
       Category: s.category ?? "",
       Level: s.level ?? "",
       Centre: s.centre ?? "",
@@ -536,6 +537,122 @@ export function studentsToWorkbook(students: Student[]): ArrayBuffer {
   );
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Students");
+  return XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+}
+
+/**
+ * Full roster: every student field PLUS one column per question type
+ * (correct count and points). Used by the "Full student roster with scores"
+ * export.
+ */
+export function fullRosterToWorkbook(
+  students: Student[],
+  questionTypes: QuestionType[],
+  scoresByStudent: Map<number, Record<number, number>>
+): ArrayBuffer {
+  const data = students.map((s) => {
+    const scores = scoresByStudent.get(s.id) ?? {};
+    const row: Record<string, string | number> = {
+      "Student Code": s.student_code ?? "",
+      "Exam Code": s.exam_code ?? "",
+      Barcode: s.barcode ?? "",
+      "Full Name": s.full_name,
+      "Date of Birth": s.dob ?? "",
+      Gender: s.gender ?? "",
+      Category: s.category ?? "",
+      Level: s.level ?? "",
+      "Listening Category": s.listening_category ?? "",
+      "Listening Code": s.listening_code ?? "",
+      Centre: s.centre ?? "",
+      Teacher: s.teacher ?? "",
+      "CI Code": s.ci_code ?? "",
+      "T-Shirt Size": s.tshirt_size ?? "",
+      Email: s.email ?? "",
+      Phone: s.phone ?? "",
+      "Report Time": s.report_time ?? "",
+      "Comp Time": s.comp_time ?? "",
+      Deduction: s.deduction ?? "",
+    };
+    let total = 0;
+    for (const qt of questionTypes) {
+      const correct = scores[qt.id] ?? 0;
+      const pts = correct * qt.points_per_question;
+      row[`${qt.name} (correct)`] = correct;
+      row[`${qt.name} (points)`] = pts;
+      total += pts;
+    }
+    row["Total Points"] = total;
+    return row;
+  });
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Roster + Scores");
+  return XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+}
+
+/**
+ * Awards-style workbook: only trophy winners, grouped by category, alphabetical
+ * within each trophy band. Columns: Name, Trophy, Centre, Teacher.
+ */
+export function awardsToWorkbook(rows: LeaderboardRow[]): ArrayBuffer {
+  const winners = rows
+    .filter((r) => r.trophy != null)
+    .slice()
+    .sort((a, b) => {
+      const ca = (a.student.category ?? "").localeCompare(b.student.category ?? "");
+      if (ca !== 0) return ca;
+      const ta = (a.trophy?.display_order ?? 0) - (b.trophy?.display_order ?? 0);
+      if (ta !== 0) return ta;
+      return (a.student.full_name || "").localeCompare(b.student.full_name || "");
+    });
+
+  const data = winners.map((r) => ({
+    Category: r.student.category ?? "",
+    Name: r.student.full_name,
+    Trophy: r.trophy?.name ?? "",
+    Centre: r.student.centre ?? "",
+    Teacher: r.student.teacher ?? "",
+    DOB: r.student.dob ?? "",
+  }));
+
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "Awards");
+  return XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+}
+
+/**
+ * Coaches workbook (teachers OR centres).
+ */
+export function coachesToWorkbook(
+  rows: {
+    key: string;
+    centres?: string[];
+    studentCount: number;
+    totalTrophies: number;
+    totalPoints: number;
+    trophyCounts: Record<number, number>;
+  }[],
+  trophyTypes: { id: number; name: string; display_order: number }[],
+  mode: "teachers" | "centres"
+): ArrayBuffer {
+  const sorted = [...trophyTypes].sort((a, b) => a.display_order - b.display_order);
+  const subject = mode === "teachers" ? "Teacher" : "Centre";
+  const data = rows.map((r, i) => {
+    const out: Record<string, string | number> = {
+      Rank: i + 1,
+      [subject]: r.key,
+    };
+    if (mode === "teachers") out["Centres"] = (r.centres ?? []).join(", ");
+    out["Students"] = r.studentCount;
+    for (const t of sorted) out[t.name] = r.trophyCounts[t.id] ?? 0;
+    out["Total Trophies"] = r.totalTrophies;
+    out["Total Points"] = r.totalPoints;
+    return out;
+  });
+  const ws = XLSX.utils.json_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, mode === "teachers" ? "Teachers" : "Centres");
   return XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
 }
 

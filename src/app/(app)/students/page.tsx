@@ -127,11 +127,12 @@ export default function StudentsPage() {
 
   async function save(payload: Partial<StudentInsert>) {
     try {
+      let createdName: string | null = null;
       if (editing) {
         await updateStudent(editing.id, payload);
         toast.success("Student updated");
       } else {
-        await upsertStudent({
+        const inserted = await upsertStudent({
           student_code: null, exam_code: null, barcode: null, full_name: "",
           dob: null, gender: null, category: null, level: null, listening_category: null,
           listening_code: null, centre: null, teacher: null, ci_code: null,
@@ -139,12 +140,22 @@ export default function StudentsPage() {
           comp_time: null, deduction: null, notes: null, extra: {},
           ...payload,
         } as StudentInsert);
-        toast.success("Student added");
+        createdName = inserted.full_name;
+        toast.success(`Added "${inserted.full_name}"`);
       }
       setEditOpen(false);
       setEditing(null);
-      load();
+      await load();
+      // Surface the new row immediately so the user sees confirmation: drop
+      // the search filter onto the new name and jump to page 1 of those
+      // results. Without this, a freshly added "Zaheer" lives on page 26 and
+      // looks like the save silently failed.
+      if (createdName) {
+        setSearch(createdName);
+        setPage(1);
+      }
     } catch (e) {
+      console.error("[students.save] failed", e);
       toast.error(asMsg(e, "Save failed"));
     }
   }

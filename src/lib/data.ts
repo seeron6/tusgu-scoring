@@ -13,13 +13,37 @@ import type {
 // Students
 // =============================================================
 
+/**
+ * Supabase / PostgREST defaults SELECTs to 1000 rows. We page through
+ * in 1000-row chunks until we get a short page, so exports include every
+ * student even at 2.5k+.
+ */
 export async function listStudents(): Promise<Student[]> {
-  const { data, error } = await supabase()
-    .from("students")
-    .select("*")
-    .order("full_name", { ascending: true });
-  if (error) throw error;
-  return (data ?? []) as Student[];
+  return paginate<Student>((from, to) =>
+    supabase()
+      .from("students")
+      .select("*")
+      .order("full_name", { ascending: true })
+      .range(from, to)
+  );
+}
+
+const PAGE_SIZE = 1000;
+
+async function paginate<T>(
+  query: (from: number, to: number) => PromiseLike<{ data: unknown[] | null; error: unknown }>
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await query(from, from + PAGE_SIZE - 1);
+    if (error) throw error;
+    const rows = (data ?? []) as T[];
+    out.push(...rows);
+    if (rows.length < PAGE_SIZE) break;
+    // Hard upper bound so a misconfigured ORDER doesn't loop forever.
+    if (out.length >= 100_000) break;
+  }
+  return out;
 }
 
 export async function searchStudents(query: string): Promise<Student[]> {
@@ -157,9 +181,9 @@ export async function deleteQuestionType(id: number): Promise<void> {
 // =============================================================
 
 export async function listScores(): Promise<Score[]> {
-  const { data, error } = await supabase().from("scores").select("*");
-  if (error) throw error;
-  return (data ?? []) as Score[];
+  return paginate<Score>((from, to) =>
+    supabase().from("scores").select("*").order("id", { ascending: true }).range(from, to)
+  );
 }
 
 export async function getStudentScores(studentId: number): Promise<Record<number, number>> {
