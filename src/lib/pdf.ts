@@ -9,6 +9,23 @@ const MUTED: [number, number, number] = [122, 119, 112];
 const BORDER: [number, number, number] = [232, 227, 215];
 const BG_ALT: [number, number, number] = [250, 249, 245];
 
+/**
+ * jsPDF's built-in fonts (Helvetica/Times/Courier) don't carry emoji glyphs,
+ * so any emoji in a string renders as garbled boxes. Strip them before they
+ * hit the PDF — the text label still conveys the trophy.
+ */
+function stripEmoji(s: string): string {
+  if (!s) return s;
+  return s
+    // Common emoji ranges + variation selector
+    .replace(
+      /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F000}-\u{1F02F}\u{1F0A0}-\u{1F0FF}\u{2300}-\u{23FF}\u{2B00}-\u{2BFF}\u{FE0F}\u{200D}]/gu,
+      ""
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export type PdfOptions = {
   hideScores?: boolean;
   title?: string;
@@ -103,7 +120,7 @@ export function leaderboardToPdf(
         arr.push(r.totalScore, `${r.percentage.toFixed(1)}%`);
       }
       arr.push(
-        r.trophy ? `${r.trophy.icon ?? ""} ${r.trophy.name}`.trim() : "—",
+        r.trophy ? stripEmoji(r.trophy.name) : "—",
         r.student.dob ?? "",
         r.age ?? "",
         r.student.centre ?? "",
@@ -183,8 +200,7 @@ export function awardsToPdf(rows: LeaderboardRow[], opts: PdfOptions = {}): Arra
       doc.setFont("helvetica", "bold");
       doc.setFontSize(10.5);
       doc.setTextColor(...NAVY);
-      const trophyLabel = `${g.trophy.icon ?? ""} ${g.trophy.name}`.trim();
-      doc.text(trophyLabel, 50, y);
+      doc.text(stripEmoji(g.trophy.name), 50, y);
       doc.setFont("helvetica", "normal");
       doc.setFontSize(9);
       doc.setTextColor(...MUTED);

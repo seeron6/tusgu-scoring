@@ -13,6 +13,7 @@ import {
   Unlock,
   Menu,
   X,
+  GraduationCap,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { cn } from "@/lib/utils";
@@ -23,6 +24,7 @@ const NAV = [
   { href: "/scores", label: "Scores", icon: ClipboardList, locked: true },
   { href: "/leaderboard", label: "Leaderboard", icon: Trophy, locked: true },
   { href: "/awards", label: "Awards", icon: Award, locked: true },
+  { href: "/coaches", label: "Coaches", icon: GraduationCap, locked: true },
   { href: "/setup", label: "Setup", icon: Settings2, locked: true },
   { href: "/sync", label: "Sync", icon: RefreshCcw, locked: true },
 ] as const;

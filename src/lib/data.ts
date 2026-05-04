@@ -121,15 +121,17 @@ export async function listQuestionTypes(): Promise<QuestionType[]> {
 export async function upsertQuestionType(
   input: Omit<QuestionType, "id" | "created_at"> & { id?: number }
 ): Promise<QuestionType> {
+  const payload = {
+    name: input.name,
+    points_per_question: input.points_per_question,
+    max_questions: input.max_questions,
+    display_order: input.display_order,
+    category_max_overrides: input.category_max_overrides ?? {},
+  };
   if (input.id) {
     const { data, error } = await supabase()
       .from("question_types")
-      .update({
-        name: input.name,
-        points_per_question: input.points_per_question,
-        max_questions: input.max_questions,
-        display_order: input.display_order,
-      })
+      .update(payload)
       .eq("id", input.id)
       .select("*")
       .single();
@@ -138,12 +140,7 @@ export async function upsertQuestionType(
   }
   const { data, error } = await supabase()
     .from("question_types")
-    .insert({
-      name: input.name,
-      points_per_question: input.points_per_question,
-      max_questions: input.max_questions,
-      display_order: input.display_order,
-    })
+    .insert(payload)
     .select("*")
     .single();
   if (error) throw error;
@@ -210,15 +207,17 @@ export async function listTrophyTypes(): Promise<TrophyType[]> {
 export async function upsertTrophyType(
   input: Omit<TrophyType, "id"> & { id?: number }
 ): Promise<TrophyType> {
+  const payload = {
+    name: input.name,
+    icon: input.icon,
+    description: input.description,
+    display_order: input.display_order,
+    points: input.points ?? 0,
+  };
   if (input.id) {
     const { data, error } = await supabase()
       .from("trophy_types")
-      .update({
-        name: input.name,
-        icon: input.icon,
-        description: input.description,
-        display_order: input.display_order,
-      })
+      .update(payload)
       .eq("id", input.id)
       .select("*")
       .single();
@@ -227,12 +226,7 @@ export async function upsertTrophyType(
   }
   const { data, error } = await supabase()
     .from("trophy_types")
-    .insert({
-      name: input.name,
-      icon: input.icon,
-      description: input.description,
-      display_order: input.display_order,
-    })
+    .insert(payload)
     .select("*")
     .single();
   if (error) throw error;

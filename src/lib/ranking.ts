@@ -6,7 +6,7 @@ import type {
   TrophyAllocation,
   TrophyType,
 } from "./types";
-import { calculateAge } from "./utils";
+import { calculateAge, maxQuestionsFor } from "./utils";
 
 export type LeaderboardInputs = {
   students: Student[];
@@ -36,10 +36,8 @@ export function buildLeaderboard({
   }
 
   const pointsByQt: Record<number, number> = {};
-  let maxPossible = 0;
   for (const qt of questionTypes) {
     pointsByQt[qt.id] = qt.points_per_question;
-    maxPossible += qt.points_per_question * qt.max_questions;
   }
 
   const grouped = new Map<string, Student[]>();
@@ -59,6 +57,12 @@ export function buildLeaderboard({
   for (const cat of categoryKeys) {
     const list = grouped.get(cat)!;
     const sorted = sortByCanonicalRank(list, scoresByStudent, pointsByQt);
+    // Max possible is per-category because some categories have a higher
+    // question count for Add/Sub (the A/B/C/U/V/Y/Z prefix override).
+    const maxPossible = questionTypes.reduce(
+      (sum, qt) => sum + qt.points_per_question * maxQuestionsFor(qt, cat),
+      0
+    );
     sorted.forEach((student, i) => {
       const sm = scoresByStudent.get(student.id) ?? {};
       const totalScore = totalPoints(sm, pointsByQt);

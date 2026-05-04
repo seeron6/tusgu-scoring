@@ -146,7 +146,14 @@ function normalizeCell(v: unknown): string {
   if (v == null) return "";
   if (v instanceof Date) {
     if (isNaN(v.getTime())) return "";
-    return v.toISOString().slice(0, 10);
+    // Use LOCAL date components — SheetJS creates Excel dates at local midnight,
+    // and toISOString() shifts them by the timezone offset (so a +5:30 user
+    // sees DOB shift back by one day). Reading getFullYear/getMonth/getDate
+    // gives us the date the user actually typed.
+    const y = v.getFullYear();
+    const m = String(v.getMonth() + 1).padStart(2, "0");
+    const d = String(v.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
   }
   return String(v).replace(/\s+/g, " ").trim();
 }
@@ -172,6 +179,7 @@ const FIELD_HINTS: Record<StudentField, string[]> = {
   first_name: ["first name", "firstname", "given name", "fname"],
   last_name: ["last name", "lastname", "surname", "family name", "lname"],
   dob: ["date of birth", "dob", "birth date", "birthdate", "birthday", "born"],
+  gender: ["gender", "sex", "m/f", "male/female"],
   category: ["visual 2025 category", "category", "group", "division", "section", "class"],
   level: ["level as of", "current level", "level"],
   listening_category: ["listening category"],
@@ -243,7 +251,11 @@ export function normalizeDob(input: unknown): string | null {
   if (input == null || input === "") return null;
   if (input instanceof Date) {
     if (isNaN(input.getTime())) return null;
-    return input.toISOString().slice(0, 10);
+    // See normalizeCell — local components avoid the UTC shift bug.
+    const y = input.getFullYear();
+    const m = String(input.getMonth() + 1).padStart(2, "0");
+    const d = String(input.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
   }
   const raw = String(input).trim();
   if (!raw) return null;
@@ -279,21 +291,41 @@ export function normalizeDob(input: unknown): string | null {
   }
 
   // Excel serial (raw number persisted as a string by `raw: false`).
+  // Build a UTC Date and read UTC components so we don't shift across timezones.
   if (/^\d{4,6}$/.test(raw)) {
     const serial = parseInt(raw, 10);
-    const epoch = Date.UTC(1899, 11, 30); // Excel's 1900-date-system origin
-    const d = new Date(epoch + serial * 86400 * 1000);
-    if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+    const utcMs = Date.UTC(1899, 11, 30) + serial * 86400 * 1000;
+    const d = new Date(utcMs);
+    if (!isNaN(d.getTime())) {
+      const y = d.getUTCFullYear();
+      const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+      const day = String(d.getUTCDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    }
   }
 
   const parsed = new Date(raw);
-  if (!isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  if (!isNaN(parsed.getTime())) {
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, "0");
+    const d = String(parsed.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
   return null;
 }
 
 // =============================================================
 // Student import — turn raw rows into StudentInsert objects
 // =============================================================
+
+function normalizeGender(input: string): string | null {
+  if (!input) return null;
+  const v = input.trim().toLowerCase();
+  if (!v) return null;
+  if (v === "m" || v === "male" || v === "boy" || v === "b") return "Male";
+  if (v === "f" || v === "female" || v === "girl" || v === "g") return "Female";
+  return input.trim();
+}
 
 export type StudentImportPreview = {
   valid: StudentInsert[];
@@ -355,6 +387,7 @@ export function previewStudentImport(
       barcode: get(mapping.barcode) || null,
       full_name: fullName,
       dob,
+      gender: normalizeGender(get(mapping.gender)),
       category: get(mapping.category) || null,
       level: get(mapping.level) || null,
       listening_category: get(mapping.listening_category) || null,
@@ -510,6 +543,68 @@ export function downloadWorkbook(buffer: ArrayBuffer, filename: string) {
   const blob = new Blob([buffer], {
     type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/** Build a CSV string from the same shape we use for xlsx exports. */
+export function leaderboardToCsv(
+  rows: LeaderboardRow[],
+  questionTypes: QuestionType[],
+  opts: ExportOptions = {}
+): string {
+  const showScores = !opts.hideScores;
+  const headers = ["Rank", "Name", "Student Code", "Exam Code", "DOB", "Age", "Category", "Centre", "Teacher"];
+  if (showScores) {
+    for (const qt of questionTypes) {
+      headers.push(`${qt.name} (correct)`);
+      headers.push(`${qt.name} (points)`);
+    }
+    headers.push("Total Score", "Max Possible", "Percentage");
+  }
+  headers.push("Trophy");
+
+  const lines: string[] = [headers.map(csvEscape).join(",")];
+  for (const r of rows) {
+    const cells: (string | number)[] = [
+      r.rank,
+      r.student.full_name,
+      r.student.student_code ?? "",
+      r.student.exam_code ?? "",
+      r.student.dob ?? "",
+      r.age ?? "",
+      r.student.category ?? "",
+      r.student.centre ?? "",
+      r.student.teacher ?? "",
+    ];
+    if (showScores) {
+      for (const qt of questionTypes) {
+        const correct = r.scoresByType[qt.id] ?? 0;
+        cells.push(correct);
+        cells.push(correct * qt.points_per_question);
+      }
+      cells.push(r.totalScore, r.maxPossibleScore, Math.round(r.percentage * 100) / 100);
+    }
+    cells.push(r.trophy ? r.trophy.name : "");
+    lines.push(cells.map((c) => csvEscape(String(c))).join(","));
+  }
+  return lines.join("\n");
+}
+
+function csvEscape(s: string): string {
+  if (s == null) return "";
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
+
+export function downloadText(text: string, filename: string, mime = "text/csv;charset=utf-8") {
+  const blob = new Blob([text], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

@@ -8,6 +8,8 @@ export type QuestionType = {
   points_per_question: number;
   max_questions: number;
   display_order: number;
+  // Per-category-prefix overrides (key = first letter of category, value = max).
+  category_max_overrides: Record<string, number>;
   created_at?: string;
 };
 
@@ -18,6 +20,7 @@ export type Student = {
   barcode: string | null;
   full_name: string;
   dob: string | null;            // ISO yyyy-mm-dd
+  gender: string | null;
   category: string | null;
   level: string | null;
   listening_category: string | null;
@@ -54,6 +57,7 @@ export type TrophyType = {
   icon: string | null;
   description: string | null;
   display_order: number;
+  points: number;
 };
 
 export type TrophyAllocation = {

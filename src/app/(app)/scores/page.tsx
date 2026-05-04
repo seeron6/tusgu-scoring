@@ -12,6 +12,7 @@ import { TableSkeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/sidebar";
 import { BarcodeScannerModal } from "@/components/barcode-scanner";
 import { ProtectedPage } from "@/lib/auth-gate";
+import { maxQuestionsFor } from "@/lib/utils";
 import {
   findStudentByCode, getStudentScores, listQuestionTypes, listStudents,
   saveStudentScores,
@@ -39,6 +40,7 @@ function ScoresInner() {
   // field without fighting a sticky leading 0. Numeric value is parsed on save.
   const [scoreText, setScoreText] = React.useState<Record<number, string>>({});
   const [search, setSearch] = React.useState("");
+  const [categoryFilter, setCategoryFilter] = React.useState<string[]>([]);
   const [busy, setBusy] = React.useState(false);
   const [importOpen, setImportOpen] = React.useState(false);
   const [scannerOpen, setScannerOpen] = React.useState(false);
@@ -71,20 +73,29 @@ function ScoresInner() {
       .catch((e) => toast.error(asMsg(e, "Failed to load scores")));
   }, [selectedId]);
 
+  const allCategories = React.useMemo(
+    () => Array.from(new Set((students ?? []).map((s) => s.category ?? "").filter(Boolean))).sort(),
+    [students]
+  );
+
   const filtered = React.useMemo(() => {
     if (!students) return [];
     const q = search.trim().toLowerCase();
-    if (!q) return students;
-    return students.filter((s) =>
-      [s.full_name, s.student_code, s.exam_code, s.barcode, s.category, s.centre, s.teacher]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase()
-        .includes(q)
-    );
-  }, [students, search]);
+    return students.filter((s) => {
+      if (categoryFilter.length > 0 && !categoryFilter.includes(s.category ?? "")) return false;
+      if (q) {
+        return [s.full_name, s.student_code, s.exam_code, s.barcode, s.category, s.centre, s.teacher]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(q);
+      }
+      return true;
+    });
+  }, [students, search, categoryFilter]);
 
   const selected = students?.find((s) => s.id === selectedId) ?? null;
+  const selectedCategory = selected?.category ?? null;
 
   // value field stores the raw count of correct answers; display total
   // multiplies each by the question type's points_per_question.
@@ -92,7 +103,10 @@ function ScoresInner() {
     const v = parseInt(scoreText[qt.id] ?? "", 10);
     return sum + (Number.isFinite(v) ? v : 0) * qt.points_per_question;
   }, 0);
-  const max = questionTypes.reduce((sum, q) => sum + q.points_per_question * q.max_questions, 0);
+  const max = questionTypes.reduce(
+    (sum, q) => sum + q.points_per_question * maxQuestionsFor(q, selectedCategory),
+    0
+  );
   const pct = max > 0 ? (total / max) * 100 : 0;
 
   async function save() {
@@ -103,8 +117,8 @@ function ScoresInner() {
       for (const qt of questionTypes) {
         const raw = scoreText[qt.id] ?? "";
         const n = raw === "" ? 0 : parseInt(raw, 10);
-        const clamped = Math.max(0, Math.min(qt.max_questions, Number.isFinite(n) ? n : 0));
-        out[qt.id] = clamped;
+        const cap = maxQuestionsFor(qt, selectedCategory);
+        out[qt.id] = Math.max(0, Math.min(cap, Number.isFinite(n) ? n : 0));
       }
       await saveStudentScores(selectedId, out);
       toast.success("Scores saved");
@@ -172,7 +186,7 @@ function ScoresInner() {
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-4 lg:gap-6">
           <div className="bg-white rounded-xl border border-[#E8E3D7] shadow-sm overflow-hidden">
-            <div className="px-3 sm:px-4 py-3 border-b border-[#E8E3D7]">
+            <div className="px-3 sm:px-4 py-3 border-b border-[#E8E3D7] space-y-2">
               <div className="relative">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-[#A8A39B]" />
                 <Input
@@ -189,6 +203,11 @@ function ScoresInner() {
                   <ScanLine className="w-4 h-4" />
                 </button>
               </div>
+              <CategoryMultiSelect
+                allCategories={allCategories}
+                selected={categoryFilter}
+                onChange={setCategoryFilter}
+              />
             </div>
             <ul className="max-h-[60vh] lg:max-h-[600px] overflow-y-auto">
               {filtered.slice(0, 200).map((s) => (
@@ -253,34 +272,33 @@ function ScoresInner() {
                     const raw = scoreText[qt.id] ?? "";
                     const n = parseInt(raw, 10);
                     const correct = Number.isFinite(n) ? n : 0;
+                    const cap = maxQuestionsFor(qt, selectedCategory);
                     const points = correct * qt.points_per_question;
-                    const maxPoints = qt.points_per_question * qt.max_questions;
+                    const maxPoints = qt.points_per_question * cap;
                     return (
                       <div key={qt.id}>
                         <Label>
                           {qt.name}{" "}
                           <span className="text-xs text-[#7A7770] font-normal">
-                            (correct out of {qt.max_questions})
+                            (correct out of {cap})
                           </span>
                         </Label>
                         <Input
                           type="number"
                           inputMode="numeric"
                           min={0}
-                          max={qt.max_questions}
+                          max={cap}
                           value={raw}
                           placeholder="0"
                           onChange={(e) => {
                             const v = e.target.value;
-                            // Allow empty (so the user can fully clear and re-type)
-                            // and any digits up to the max question count.
                             if (v === "") {
                               setScoreText((m) => ({ ...m, [qt.id]: "" }));
                               return;
                             }
                             const num = parseInt(v, 10);
                             if (!Number.isFinite(num)) return;
-                            const clamped = Math.max(0, Math.min(qt.max_questions, num));
+                            const clamped = Math.max(0, Math.min(cap, num));
                             setScoreText((m) => ({ ...m, [qt.id]: String(clamped) }));
                           }}
                         />
@@ -588,4 +606,54 @@ function ScoreImportModal({
 function asMsg(e: unknown, fallback: string): string {
   if (e instanceof Error) return e.message;
   return fallback;
+}
+
+function CategoryMultiSelect({
+  allCategories, selected, onChange,
+}: {
+  allCategories: string[];
+  selected: string[];
+  onChange: (v: string[]) => void;
+}) {
+  if (allCategories.length === 0) return null;
+  return (
+    <details className="relative">
+      <summary className="h-8 w-full rounded-md border border-[#E8E3D7] bg-[#FAF9F5] px-2.5 text-[12px] flex items-center justify-between cursor-pointer hover:border-[#D9D2BE] transition-colors list-none">
+        <span className="text-[#1F1E1B]">
+          {selected.length === 0 ? "All categories" : selected.length === 1 ? selected[0] : `${selected.length} categories`}
+        </span>
+        <span className="text-[#7A7770] text-[10px]">▼</span>
+      </summary>
+      <div className="absolute z-20 mt-1 w-full max-h-72 overflow-y-auto bg-white border border-[#E8E3D7] rounded-md shadow-lg p-1.5">
+        <div className="flex gap-1 px-1.5 py-1 border-b border-[#F0EDE5] mb-1">
+          <button
+            className="text-[11px] text-[#1B3A6B] hover:underline"
+            onClick={() => onChange(allCategories)}
+          >
+            Select all
+          </button>
+          <span className="text-[#A8A39B]">·</span>
+          <button
+            className="text-[11px] text-[#7A7770] hover:underline"
+            onClick={() => onChange([])}
+          >
+            Clear
+          </button>
+        </div>
+        {allCategories.map((c) => (
+          <label key={c} className="flex items-center gap-2 px-2 py-1 hover:bg-[#F4F1E8] rounded cursor-pointer text-[12.5px]">
+            <input
+              type="checkbox"
+              className="accent-[#1B3A6B]"
+              checked={selected.includes(c)}
+              onChange={(e) =>
+                onChange(e.target.checked ? [...selected, c] : selected.filter((x) => x !== c))
+              }
+            />
+            <span className="truncate">{c}</span>
+          </label>
+        ))}
+      </div>
+    </details>
+  );
 }

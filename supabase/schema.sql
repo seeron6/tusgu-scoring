@@ -15,12 +15,15 @@ create table if not exists public.categories (
 );
 
 create table if not exists public.question_types (
-  id                  bigserial primary key,
-  name                text unique not null,
-  points_per_question integer not null default 1,
-  max_questions       integer not null default 100,
-  display_order       integer not null default 0,
-  created_at          timestamptz not null default now()
+  id                       bigserial primary key,
+  name                     text unique not null,
+  points_per_question      integer not null default 1,
+  max_questions            integer not null default 100,
+  display_order            integer not null default 0,
+  -- Per-category overrides keyed by the first letter of the category name.
+  -- e.g. {"A": 200, "B": 200} → categories starting with A or B use 200 instead of max_questions.
+  category_max_overrides   jsonb not null default '{}'::jsonb,
+  created_at               timestamptz not null default now()
 );
 
 create table if not exists public.students (
@@ -31,6 +34,7 @@ create table if not exists public.students (
   barcode             text,           -- separate explicit barcode column if present
   full_name           text not null,
   dob                 date,
+  gender              text,
   -- Categorization
   category            text,           -- "A1", "B2", "Z3"… freeform; ranking groups by this
   level               text,           -- "Basic", "Elementary A", etc
@@ -75,7 +79,10 @@ create table if not exists public.trophy_types (
   name          text unique not null,
   icon          text,
   description   text,
-  display_order integer not null default 0
+  display_order integer not null default 0,
+  -- Points awarded for a CI/Centre summary leaderboard.
+  -- Defaults: GC 75, Champion 50, 1st RU 40, 2nd RU 30, 3rd RU 25, 4th RU 20, 5th RU 10, Merit 5.
+  points        integer not null default 0
 );
 
 create table if not exists public.trophy_allocations (
@@ -90,26 +97,27 @@ create table if not exists public.trophy_allocations (
 -- Default seed (only inserted if tables are empty)
 -- =============================================================
 
--- Two question types: Addition/Subtraction and Multiplication/Division, 100 questions each.
-insert into public.question_types (name, points_per_question, max_questions, display_order)
+-- Two question types: Addition/Subtraction (150 default, 200 for A/B/C/U/V/Y/Z)
+-- and Multiplication/Division (100 default).
+insert into public.question_types (name, points_per_question, max_questions, display_order, category_max_overrides)
 select * from (values
-  ('Addition / Subtraction', 1, 100, 1),
-  ('Multiplication / Division', 1, 100, 2)
-) as v(name, ppq, mq, ord)
+  ('Addition / Subtraction',    1, 150, 1, '{"A":200,"B":200,"C":200,"U":200,"V":200,"Y":200,"Z":200}'::jsonb),
+  ('Multiplication / Division', 1, 100, 2, '{}'::jsonb)
+) as v(name, ppq, mq, ord, overrides)
 where not exists (select 1 from public.question_types);
 
 -- Trophies: Grand Champion → Champion → 1st-5th Runner Up → Merit (no participation).
-insert into public.trophy_types (name, icon, description, display_order)
+insert into public.trophy_types (name, icon, description, display_order, points)
 select * from (values
-  ('Grand Champion',  '🏆', 'Top of the entire competition',         1),
-  ('Champion',        '🥇', 'Category winner',                       2),
-  ('1st Runner Up',   '🥈', 'Second place',                          3),
-  ('2nd Runner Up',   '🥉', 'Third place',                           4),
-  ('3rd Runner Up',   '🎖️', 'Fourth place',                          5),
-  ('4th Runner Up',   '🎖️', 'Fifth place',                           6),
-  ('5th Runner Up',   '🎖️', 'Sixth place',                           7),
-  ('Merit',           '⭐', 'Honourable mention',                    8)
-) as v(name, icon, description, ord)
+  ('Grand Champion',  '🏆', 'Top of the entire competition', 1, 75),
+  ('Champion',        '🥇', 'Category winner',               2, 50),
+  ('1st Runner Up',   '🥈', 'Second place',                  3, 40),
+  ('2nd Runner Up',   '🥉', 'Third place',                   4, 30),
+  ('3rd Runner Up',   '🎖️', 'Fourth place',                  5, 25),
+  ('4th Runner Up',   '🎖️', 'Fifth place',                   6, 20),
+  ('5th Runner Up',   '🎖️', 'Sixth place',                   7, 10),
+  ('Merit',           '⭐', 'Honourable mention',            8,  5)
+) as v(name, icon, description, ord, points)
 where not exists (select 1 from public.trophy_types);
 
 -- =============================================================

@@ -105,8 +105,10 @@ function AwardsInner() {
       {tab === "preview" ? (
         <PreviewSection rows={rows} />
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <TrophyTypesCard trophies={trophies} reload={load} />
+        <div className="space-y-4">
+          <div className="bg-[#F4F1E8] border border-[#E5DECF] rounded-lg p-3 text-[12px] text-[#4A4843] leading-relaxed">
+            Trophy types and point values live on the <strong>Setup</strong> page now. Use this card to set quantities (or percentages) per category.
+          </div>
           <AllocationsCard
             trophies={trophies ?? []}
             categories={categories}
@@ -264,164 +266,6 @@ function TrophyBand({ trophy, rows }: { trophy: TrophyType; rows: LeaderboardRow
   );
 }
 
-function TrophyTypesCard({ trophies, reload }: { trophies: TrophyType[] | null; reload: () => void }) {
-  const [editOpen, setEditOpen] = React.useState(false);
-  const [editing, setEditing] = React.useState<TrophyType | null>(null);
-  const [confirmDel, setConfirmDel] = React.useState<TrophyType | null>(null);
-
-  async function save(name: string, icon: string, description: string, displayOrder: number) {
-    if (!name.trim()) return toast.error("Name is required");
-    try {
-      await upsertTrophyType({
-        id: editing?.id,
-        name: name.trim(),
-        icon: icon.trim() || null,
-        description: description.trim() || null,
-        display_order: displayOrder,
-      });
-      toast.success(editing ? "Trophy updated" : "Trophy added");
-      setEditOpen(false);
-      setEditing(null);
-      reload();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Save failed");
-    }
-  }
-
-  async function doDelete(t: TrophyType) {
-    try {
-      await deleteTrophyType(t.id);
-      toast.success("Trophy deleted");
-      reload();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Delete failed");
-    }
-  }
-
-  return (
-    <div className="bg-white rounded-xl border border-[#E8E3D7] shadow-sm overflow-hidden">
-      <div className="px-5 py-4 border-b border-[#F0EDE5] flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Award className="w-[15px] h-[15px] text-[#7A7770]" strokeWidth={1.75} />
-          <h2 className="text-[13px] font-semibold text-[#1F1E1B]">Trophy Types</h2>
-        </div>
-        <Button size="sm" onClick={() => { setEditing(null); setEditOpen(true); }}>
-          <Plus className="w-4 h-4" /> Add
-        </Button>
-      </div>
-
-      {trophies == null ? (
-        <TableSkeleton rows={4} cols={3} />
-      ) : trophies.length === 0 ? (
-        <EmptyState icon={Award} title="No trophy types" description="Add at least one trophy type." />
-      ) : (
-        <ul>
-          {trophies.map((t, i) => (
-            <li key={t.id} className="flex items-center gap-3 px-5 py-3 border-b border-[#F0EDE5] last:border-b-0">
-              <span className="text-[11px] text-[#A8A39B] tabular-nums w-6">#{i + 1}</span>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  {t.icon && <span className="text-base">{t.icon}</span>}
-                  <span className="text-[13.5px] font-medium text-[#1F1E1B] truncate">{t.name}</span>
-                </div>
-                {t.description && <div className="text-[11.5px] text-[#7A7770] truncate">{t.description}</div>}
-              </div>
-              <Button variant="ghost" size="sm" onClick={() => { setEditing(t); setEditOpen(true); }}>
-                <Pencil className="w-3.5 h-3.5" />
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setConfirmDel(t)}>
-                <Trash2 className="w-3.5 h-3.5 text-[#B8341A]" />
-              </Button>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      <TrophyModal
-        open={editOpen}
-        onClose={() => { setEditOpen(false); setEditing(null); }}
-        editing={editing}
-        defaultOrder={trophies ? trophies.length + 1 : 1}
-        onSave={save}
-      />
-      <ConfirmDialog
-        open={!!confirmDel}
-        onClose={() => setConfirmDel(null)}
-        onConfirm={() => confirmDel && doDelete(confirmDel)}
-        title="Delete trophy?"
-        message={`Delete "${confirmDel?.name}" and any allocations using it.`}
-        confirmLabel="Delete"
-        destructive
-      />
-    </div>
-  );
-}
-
-function TrophyModal({
-  open, onClose, editing, defaultOrder, onSave,
-}: {
-  open: boolean;
-  onClose: () => void;
-  editing: TrophyType | null;
-  defaultOrder: number;
-  onSave: (name: string, icon: string, description: string, displayOrder: number) => Promise<unknown>;
-}) {
-  const [name, setName] = React.useState("");
-  const [icon, setIcon] = React.useState("");
-  const [desc, setDesc] = React.useState("");
-  const [order, setOrder] = React.useState(1);
-  const [busy, setBusy] = React.useState(false);
-  React.useEffect(() => {
-    setName(editing?.name ?? "");
-    setIcon(editing?.icon ?? "");
-    setDesc(editing?.description ?? "");
-    setOrder(editing?.display_order ?? defaultOrder);
-  }, [editing, open, defaultOrder]);
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={editing ? "Edit Trophy Type" : "Add Trophy Type"}
-      footer={
-        <>
-          <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
-          <Button
-            onClick={async () => {
-              setBusy(true);
-              try { await onSave(name, icon, desc, order); }
-              finally { setBusy(false); }
-            }}
-            disabled={busy}
-          >
-            {editing ? "Save" : "Create"}
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-3">
-        <div>
-          <Label>Name *</Label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Grand Champion" />
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <Label>Icon (emoji)</Label>
-            <Input value={icon} onChange={(e) => setIcon(e.target.value)} placeholder="🏆" maxLength={4} />
-          </div>
-          <div>
-            <Label>Order</Label>
-            <Input type="number" value={order} onChange={(e) => setOrder(parseInt(e.target.value || "0", 10) || 1)} />
-          </div>
-        </div>
-        <div>
-          <Label>Description</Label>
-          <Input value={desc} onChange={(e) => setDesc(e.target.value)} />
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
 function AllocationsCard({
   trophies, categories, allocations, students, reload,
 }: {
@@ -432,7 +276,13 @@ function AllocationsCard({
   reload: () => void;
 }) {
   const [activeCat, setActiveCat] = React.useState<string | null>(null);
-  const [draft, setDraft] = React.useState<Record<string, number>>({});
+  // mode = "qty" → user enters absolute number of trophies per type
+  // mode = "pct" → user enters a percentage of the category student count.
+  // Saved to DB as the rounded-up quantity in either mode.
+  const [mode, setMode] = React.useState<"qty" | "pct">("qty");
+  // Both drafts keyed `${category}-${trophyTypeId}` → string for free editing.
+  const [qtyDraft, setQtyDraft] = React.useState<Record<string, string>>({});
+  const [pctDraft, setPctDraft] = React.useState<Record<string, string>>({});
   const [busy, setBusy] = React.useState(false);
 
   React.useEffect(() => {
@@ -442,26 +292,53 @@ function AllocationsCard({
   }, [categories, activeCat]);
 
   React.useEffect(() => {
-    const d: Record<string, number> = {};
-    for (const a of allocations) d[`${a.category}-${a.trophy_type_id}`] = a.quantity;
-    setDraft(d);
+    const q: Record<string, string> = {};
+    for (const a of allocations) q[`${a.category}-${a.trophy_type_id}`] = String(a.quantity);
+    setQtyDraft(q);
   }, [allocations]);
 
-  function setQty(cat: string, ttId: number, qty: number) {
-    setDraft((d) => ({ ...d, [`${cat}-${ttId}`]: Math.max(0, qty) }));
+  function categoryStudentCount(cat: string): number {
+    return students.filter((s) => (s.category ?? "(uncategorised)") === cat).length;
+  }
+
+  function pctToQty(cat: string, pct: number): number {
+    return Math.ceil((categoryStudentCount(cat) * pct) / 100);
+  }
+
+  /** Resolve an effective quantity for a given category+trophy from whichever mode is active. */
+  function effectiveQty(cat: string, ttId: number): number {
+    const k = `${cat}-${ttId}`;
+    if (mode === "pct") {
+      const pctRaw = pctDraft[k];
+      if (pctRaw != null && pctRaw !== "") {
+        const p = parseFloat(pctRaw);
+        if (Number.isFinite(p)) return pctToQty(cat, p);
+      }
+    }
+    const v = parseInt(qtyDraft[k] ?? "0", 10);
+    return Number.isFinite(v) ? v : 0;
   }
 
   function applyToAll() {
     if (!activeCat) return;
-    const next = { ...draft };
-    for (const c of categories) {
-      for (const t of trophies) {
-        const v = draft[`${activeCat}-${t.id}`] ?? 0;
-        next[`${c}-${t.id}`] = v;
+    if (mode === "pct") {
+      const next = { ...pctDraft };
+      for (const c of categories) {
+        for (const t of trophies) {
+          next[`${c}-${t.id}`] = pctDraft[`${activeCat}-${t.id}`] ?? "";
+        }
       }
+      setPctDraft(next);
+    } else {
+      const next = { ...qtyDraft };
+      for (const c of categories) {
+        for (const t of trophies) {
+          next[`${c}-${t.id}`] = qtyDraft[`${activeCat}-${t.id}`] ?? "0";
+        }
+      }
+      setQtyDraft(next);
     }
-    setDraft(next);
-    toast.success("Quantities copied to all categories");
+    toast.success("Copied to all categories");
   }
 
   async function save() {
@@ -469,8 +346,7 @@ function AllocationsCard({
     try {
       for (const c of categories) {
         for (const t of trophies) {
-          const qty = draft[`${c}-${t.id}`] ?? 0;
-          await upsertTrophyAllocation(t.id, c, qty);
+          await upsertTrophyAllocation(t.id, c, effectiveQty(c, t.id));
         }
       }
       toast.success("Allocations saved");
@@ -492,27 +368,38 @@ function AllocationsCard({
   if (trophies.length === 0) {
     return (
       <div className="bg-white rounded-xl border border-[#E8E3D7]">
-        <EmptyState icon={Award} title="No trophy types" description="Add trophy types on the left first." />
+        <EmptyState icon={Award} title="No trophy types" description="Edit trophy types on the Setup page." />
       </div>
     );
   }
 
-  const studentsInCat = activeCat
-    ? students.filter((s) => (s.category ?? "(uncategorised)") === activeCat).length
-    : 0;
+  const studentsInCat = activeCat ? categoryStudentCount(activeCat) : 0;
   const totalAllocated = activeCat
-    ? trophies.reduce((sum, t) => sum + (draft[`${activeCat}-${t.id}`] ?? 0), 0)
+    ? trophies.reduce((sum, t) => sum + effectiveQty(activeCat, t.id), 0)
     : 0;
   const overAllocated = totalAllocated > studentsInCat && studentsInCat > 0;
 
   return (
     <div className="bg-white rounded-xl border border-[#E8E3D7] shadow-sm overflow-hidden">
-      <div className="px-5 py-4 border-b border-[#F0EDE5] flex items-center justify-between">
+      <div className="px-5 py-4 border-b border-[#F0EDE5] flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-2">
           <Users className="w-[15px] h-[15px] text-[#7A7770]" strokeWidth={1.75} />
           <h2 className="text-[13px] font-semibold text-[#1F1E1B]">Allocations per Category</h2>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          <div className="flex items-center bg-[#F4F1E8] rounded-md p-0.5">
+            {(["qty", "pct"] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                className={`px-2.5 py-1 text-[11px] font-medium rounded transition-colors ${
+                  mode === m ? "bg-white text-[#1B3A6B] shadow-sm" : "text-[#7A7770]"
+                }`}
+              >
+                {m === "qty" ? "Quantity" : "Percentage"}
+              </button>
+            ))}
+          </div>
           <Button size="sm" variant="outline" onClick={applyToAll}>
             <Copy className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Apply to all</span>
@@ -535,29 +422,68 @@ function AllocationsCard({
                 : "bg-white text-[#1F1E1B] border border-[#E8E3D7] hover:border-[#D9D2BE]"
             }`}
           >
-            {c}
+            {c} <span className="opacity-70 text-[10px]">({categoryStudentCount(c)})</span>
           </button>
         ))}
       </div>
 
       {activeCat != null && (
         <div className="p-5 space-y-3">
-          <div className="text-[10px] uppercase tracking-wider text-[#7A7770]">{activeCat} — quantities</div>
-          {trophies.map((t) => (
-            <div key={t.id} className="flex items-center gap-3">
-              <div className="flex-1 flex items-center gap-2 min-w-0">
-                {t.icon && <span>{t.icon}</span>}
-                <span className="text-[13px] text-[#1F1E1B] truncate">{t.name}</span>
+          <div className="text-[10px] uppercase tracking-wider text-[#7A7770] flex items-baseline justify-between">
+            <span>{activeCat} — {studentsInCat} student{studentsInCat === 1 ? "" : "s"}</span>
+            <span className="normal-case tracking-normal text-[11px] text-[#7A7770]">
+              {mode === "pct" ? "Decimals round up" : ""}
+            </span>
+          </div>
+          {trophies.map((t) => {
+            const k = `${activeCat}-${t.id}`;
+            if (mode === "qty") {
+              return (
+                <div key={t.id} className="flex items-center gap-3">
+                  <div className="flex-1 flex items-center gap-2 min-w-0">
+                    {t.icon && <span>{t.icon}</span>}
+                    <span className="text-[13px] text-[#1F1E1B] truncate">{t.name}</span>
+                  </div>
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    value={qtyDraft[k] ?? "0"}
+                    onChange={(e) => setQtyDraft((d) => ({ ...d, [k]: e.target.value }))}
+                    className="w-24 text-center"
+                  />
+                </div>
+              );
+            }
+            // percentage mode
+            const pctRaw = pctDraft[k] ?? "";
+            const pct = parseFloat(pctRaw);
+            const computed = Number.isFinite(pct) ? pctToQty(activeCat, pct) : 0;
+            return (
+              <div key={t.id} className="flex items-center gap-3">
+                <div className="flex-1 flex items-center gap-2 min-w-0">
+                  {t.icon && <span>{t.icon}</span>}
+                  <span className="text-[13px] text-[#1F1E1B] truncate">{t.name}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <Input
+                    type="number"
+                    inputMode="decimal"
+                    min={0}
+                    step="0.1"
+                    value={pctRaw}
+                    onChange={(e) => setPctDraft((d) => ({ ...d, [k]: e.target.value }))}
+                    placeholder="0"
+                    className="w-20 text-center"
+                  />
+                  <span className="text-[11px] text-[#7A7770]">%</span>
+                </div>
+                <div className="text-[11.5px] text-[#1F1E1B] tabular-nums w-20 text-right">
+                  = <span className="font-semibold">{computed}</span> trophies
+                </div>
               </div>
-              <Input
-                type="number"
-                min={0}
-                value={draft[`${activeCat}-${t.id}`] ?? 0}
-                onChange={(e) => setQty(activeCat, t.id, parseInt(e.target.value || "0", 10))}
-                className="w-20 text-center"
-              />
-            </div>
-          ))}
+            );
+          })}
           <div
             className={`text-[11.5px] px-3 py-2 rounded ${
               overAllocated
@@ -566,6 +492,7 @@ function AllocationsCard({
             }`}
           >
             {totalAllocated} of {studentsInCat} students will receive a trophy{overAllocated ? " — over-allocated" : ""}.
+            {mode === "pct" ? " Save to apply the computed quantities." : ""}
           </div>
         </div>
       )}

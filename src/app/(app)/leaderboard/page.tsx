@@ -1,9 +1,9 @@
 "use client";
 import * as React from "react";
-import { Trophy, Award, X, Download, FileText, FileSpreadsheet, ImageIcon } from "lucide-react";
+import { Trophy, Award, X, Download, FileText, FileSpreadsheet, ImageIcon, FileType } from "lucide-react";
 import toast from "react-hot-toast";
 import { Button } from "@/components/ui/button";
-import { Input, Label } from "@/components/ui/input";
+import { Input, Label, Select } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/skeleton";
@@ -15,7 +15,7 @@ import {
 } from "@/lib/data";
 import { buildLeaderboard } from "@/lib/ranking";
 import {
-  downloadWorkbook, leaderboardToWorkbook,
+  downloadText, downloadWorkbook, leaderboardToCsv, leaderboardToWorkbook,
 } from "@/lib/excel";
 import type { LeaderboardRow, QuestionType } from "@/lib/types";
 
@@ -38,6 +38,7 @@ function LeaderboardInner() {
   const [teacherFilter, setTeacherFilter] = React.useState<string[]>([]);
   const [minScore, setMinScore] = React.useState("");
   const [maxScore, setMaxScore] = React.useState("");
+  const [topN, setTopN] = React.useState<number>(10); // 10 = top-10 per cat by default; 0 = show all
   const [exportOpen, setExportOpen] = React.useState(false);
 
   async function load(applyTrophies: boolean) {
@@ -115,8 +116,11 @@ function LeaderboardInner() {
       if (!m.has(cat)) m.set(cat, []);
       m.get(cat)!.push(r);
     }
-    return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0]));
-  }, [filtered]);
+    const limit = topN > 0 ? topN : Infinity;
+    return Array.from(m.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([k, v]) => [k, v.slice(0, limit)] as [string, LeaderboardRow[]]);
+  }, [filtered, topN]);
 
   return (
     <div>
@@ -176,9 +180,22 @@ function LeaderboardInner() {
             <Label>Max score</Label>
             <Input type="number" value={maxScore} onChange={(e) => setMaxScore(e.target.value)} placeholder="∞" />
           </div>
+          <div>
+            <Label>Top per category</Label>
+            <Select
+              value={String(topN)}
+              onChange={(e) => setTopN(Number(e.target.value))}
+            >
+              <option value="6">Top 6</option>
+              <option value="10">Top 10</option>
+              <option value="20">Top 20</option>
+              <option value="0">Show all</option>
+            </Select>
+          </div>
         </div>
         <div className="px-4 sm:px-5 py-2.5 border-t border-[#F0EDE5] text-[11px] text-[#7A7770] bg-[#FAF9F5]">
-          Showing {filtered.length} of {rows?.length ?? 0} students
+          Showing {grouped.reduce((n, [, v]) => n + v.length, 0)} of {filtered.length} filtered students
+          {topN > 0 ? ` (top ${topN} per category)` : ""}
         </div>
       </div>
 
@@ -377,7 +394,7 @@ function FilterChip({
   );
 }
 
-type ExportFormat = "xlsx" | "pdf" | "jpeg" | "png";
+type ExportFormat = "xlsx" | "csv" | "pdf" | "jpeg" | "png";
 
 function ExportModal({
   open, onClose, rows, questionTypes,
@@ -398,6 +415,9 @@ function ExportModal({
       if (format === "xlsx") {
         const buf = leaderboardToWorkbook(rows, questionTypes, { hideScores });
         downloadWorkbook(buf, `tusgu-leaderboard-${stamp}.xlsx`);
+      } else if (format === "csv") {
+        const csv = leaderboardToCsv(rows, questionTypes, { hideScores });
+        downloadText(csv, `tusgu-leaderboard-${stamp}.csv`);
       } else if (format === "pdf") {
         const { leaderboardToPdf } = await import("@/lib/pdf");
         const buf = leaderboardToPdf(rows, questionTypes, { hideScores });
@@ -446,7 +466,7 @@ function ExportModal({
         URL.revokeObjectURL(url);
         toast.success(`${els.length} image${els.length === 1 ? "" : "s"} exported`);
       }
-      if (format === "xlsx" || format === "pdf") toast.success("Export complete");
+      if (format === "xlsx" || format === "csv" || format === "pdf") toast.success("Export complete");
       onClose();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Export failed");
@@ -472,12 +492,13 @@ function ExportModal({
           <Label>Format</Label>
           <div className="grid grid-cols-2 gap-2">
             <FormatTile id="xlsx" current={format} setCurrent={setFormat} icon={<FileSpreadsheet className="w-4 h-4" />} title="Excel" sub=".xlsx workbook" />
+            <FormatTile id="csv" current={format} setCurrent={setFormat} icon={<FileType className="w-4 h-4" />} title="CSV" sub="Plain text, opens in Excel" />
             <FormatTile id="pdf" current={format} setCurrent={setFormat} icon={<FileText className="w-4 h-4" />} title="PDF" sub="Print-ready" />
             <FormatTile id="jpeg" current={format} setCurrent={setFormat} icon={<ImageIcon className="w-4 h-4" />} title="JPEGs (zip)" sub="One per category" />
             <FormatTile id="png" current={format} setCurrent={setFormat} icon={<ImageIcon className="w-4 h-4" />} title="PNGs (zip)" sub="Lossless, larger" />
           </div>
         </div>
-        {(format === "xlsx" || format === "pdf") && (
+        {(format === "xlsx" || format === "csv" || format === "pdf") && (
           <label className="flex items-start gap-2.5 cursor-pointer">
             <input
               type="checkbox"

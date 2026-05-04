@@ -30,12 +30,14 @@ const TABLE_COLUMNS: { key: keyof Student; label: string; render?: (s: Student) 
   { key: "exam_code", label: "Exam Code" },
   { key: "full_name", label: "Name", render: (s) => <span className="font-medium">{s.full_name}</span> },
   { key: "dob", label: "DOB", render: (s) => <span className="text-[#7A7770]">{formatDate(s.dob)}</span> },
+  { key: "gender", label: "Gender" },
   { key: "category", label: "Category", render: (s) => s.category ? <CategoryChip value={s.category} /> : null },
   { key: "level", label: "Level" },
   { key: "centre", label: "Centre" },
   { key: "teacher", label: "Teacher" },
   { key: "listening_category", label: "Listening" },
   { key: "tshirt_size", label: "T-Shirt" },
+  { key: "email", label: "Email", render: (s) => s.email ? <a href={`mailto:${s.email}`} className="text-[#1B3A6B] hover:underline">{s.email}</a> : null },
   { key: "phone", label: "Phone" },
 ];
 
@@ -72,7 +74,7 @@ export default function StudentsPage() {
   const visibleColumns = React.useMemo(() => {
     if (!students || students.length === 0) {
       // Show a sensible default until we have data so the table doesn't look empty.
-      return TABLE_COLUMNS.filter((c) => ["full_name", "dob", "category", "centre", "teacher"].includes(c.key as string));
+      return TABLE_COLUMNS.filter((c) => ["full_name", "dob", "gender", "category", "centre", "teacher", "email"].includes(c.key as string));
     }
     return TABLE_COLUMNS.filter((c) =>
       students.some((s) => {
@@ -131,7 +133,7 @@ export default function StudentsPage() {
       } else {
         await upsertStudent({
           student_code: null, exam_code: null, barcode: null, full_name: "",
-          dob: null, category: null, level: null, listening_category: null,
+          dob: null, gender: null, category: null, level: null, listening_category: null,
           listening_code: null, centre: null, teacher: null, ci_code: null,
           tshirt_size: null, email: null, phone: null, report_time: null,
           comp_time: null, deduction: null, notes: null, extra: {},
@@ -401,21 +403,25 @@ function StudentModal({
 }) {
   const [fullName, setFullName] = React.useState("");
   const [dob, setDob] = React.useState("");
+  const [gender, setGender] = React.useState("");
   const [category, setCategory] = React.useState("");
   const [centre, setCentre] = React.useState("");
   const [teacher, setTeacher] = React.useState("");
   const [studentCode, setStudentCode] = React.useState("");
   const [examCode, setExamCode] = React.useState("");
+  const [email, setEmail] = React.useState("");
   const [busy, setBusy] = React.useState(false);
 
   React.useEffect(() => {
     setFullName(editing?.full_name ?? "");
     setDob(editing?.dob ?? "");
+    setGender(editing?.gender ?? "");
     setCategory(editing?.category ?? "");
     setCentre(editing?.centre ?? "");
     setTeacher(editing?.teacher ?? "");
     setStudentCode(editing?.student_code ?? "");
     setExamCode(editing?.exam_code ?? "");
+    setEmail(editing?.email ?? "");
   }, [editing, open]);
 
   async function submit() {
@@ -425,11 +431,13 @@ function StudentModal({
       await onSave({
         full_name: fullName.trim(),
         dob: dob || null,
+        gender: gender.trim() || null,
         category: category.trim() || null,
         centre: centre.trim() || null,
         teacher: teacher.trim() || null,
         student_code: studentCode.trim() || null,
         exam_code: examCode.trim() || null,
+        email: email.trim() || null,
       });
     } finally {
       setBusy(false);
@@ -458,14 +466,23 @@ function StudentModal({
           <Label>Full Name *</Label>
           <Input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Student Fullname" />
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
             <Label>Date of Birth</Label>
             <Input type="date" value={dob} onChange={(e) => setDob(e.target.value)} />
           </div>
           <div>
+            <Label>Gender</Label>
+            <Select value={gender} onChange={(e) => setGender(e.target.value)}>
+              <option value="">—</option>
+              <option value="Male">Male</option>
+              <option value="Female">Female</option>
+              <option value="Other">Other</option>
+            </Select>
+          </div>
+          <div>
             <Label>Category</Label>
-            <Input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. A1, B2, Z3" />
+            <Input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="A1, B2, Z3" />
           </div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -478,7 +495,7 @@ function StudentModal({
             <Input value={teacher} onChange={(e) => setTeacher(e.target.value)} />
           </div>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
             <Label>Student Code</Label>
             <Input value={studentCode} onChange={(e) => setStudentCode(e.target.value)} placeholder="SL-NP-…" />
@@ -486,6 +503,10 @@ function StudentModal({
           <div>
             <Label>Exam Code (barcode)</Label>
             <Input value={examCode} onChange={(e) => setExamCode(e.target.value)} placeholder="VA3-039" />
+          </div>
+          <div>
+            <Label>Email</Label>
+            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="parent@example.com" />
           </div>
         </div>
       </div>
