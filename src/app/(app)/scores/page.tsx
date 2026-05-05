@@ -19,14 +19,15 @@ import {
   listStudents, listTrophyAllocations, listTrophyTypes, saveStudentScores,
 } from "@/lib/data";
 import {
-  parseWorkbook, autoMapColumns, previewScoreImport,
+  parseWorkbook, autoMapColumns, previewScoreImport, normalizeDob,
   type ParsedRow,
   downloadText, downloadWorkbook, leaderboardToCsv, leaderboardToWorkbook,
 } from "@/lib/excel";
 import { buildLeaderboard } from "@/lib/ranking";
-import { saveStudentScores as saveScores } from "@/lib/data";
+import { saveStudentScores as saveScores, upsertStudent } from "@/lib/data";
 import type {
-  LeaderboardRow, QuestionType, Score, Student, TrophyAllocation, TrophyType,
+  LeaderboardRow, QuestionType, Score, Student, StudentInsert,
+  TrophyAllocation, TrophyType,
 } from "@/lib/types";
 
 export default function ScoresPage() {
@@ -583,9 +584,34 @@ function ScoreImportModal({
     name: string | null;
     code: string | null;
     types: Record<number, string | null>;
-  }>({ name: null, code: null, types: {} });
+    student: {
+      full_name: string | null;
+      dob: string | null;
+      category: string | null;
+      centre: string | null;
+      teacher: string | null;
+      student_code: string | null;
+      exam_code: string | null;
+      gender: string | null;
+      email: string | null;
+      phone: string | null;
+    };
+  }>({
+    name: null,
+    code: null,
+    types: {},
+    student: {
+      full_name: null, dob: null, category: null, centre: null, teacher: null,
+      student_code: null, exam_code: null, gender: null, email: null, phone: null,
+    },
+  });
+  // When ON: any row that doesn't match an existing student becomes a NEW
+  // student record. Useful when the user uploads the master list with score
+  // columns added — students+scores import in one shot.
+  const [createMissing, setCreateMissing] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [result, setResult] = React.useState<{
+    created: number;
     matched: number;
     upserted: number;
     invalid: number;
@@ -593,11 +619,27 @@ function ScoreImportModal({
   } | null>(null);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
 
+  // If the DB has no students AND the user hasn't enabled createMissing, the
+  // import literally cannot succeed — every row would be skipped. Auto-flip
+  // the toggle the first time the modal opens against an empty DB so the
+  // user gets a useful import out of the box.
+  React.useEffect(() => {
+    if (open && students.length === 0 && !createMissing) {
+      setCreateMissing(true);
+    }
+  }, [open, students.length, createMissing]);
+
   function reset() {
     setStage("pick");
     setData(null);
     setFile(null);
-    setMapping({ name: null, code: null, types: {} });
+    setMapping({
+      name: null, code: null, types: {},
+      student: {
+        full_name: null, dob: null, category: null, centre: null, teacher: null,
+        student_code: null, exam_code: null, gender: null, email: null, phone: null,
+      },
+    });
     setResult(null);
   }
 
@@ -633,6 +675,18 @@ function ScoreImportModal({
         name: auto.full_name ?? null,
         code: auto.exam_code ?? auto.student_code ?? auto.barcode ?? null,
         types,
+        student: {
+          full_name: auto.full_name ?? null,
+          dob: auto.dob ?? null,
+          category: auto.category ?? null,
+          centre: auto.centre ?? null,
+          teacher: auto.teacher ?? null,
+          student_code: auto.student_code ?? null,
+          exam_code: auto.exam_code ?? null,
+          gender: auto.gender ?? null,
+          email: auto.email ?? null,
+          phone: auto.phone ?? null,
+        },
       });
       setStage("map");
     } catch (e) {
@@ -659,21 +713,95 @@ function ScoreImportModal({
     if (!data) return;
     setBusy(true);
     try {
+      // First pass: try to match rows against existing students.
       const preview = previewScoreImport(data.rows, mapping, students, questionTypes);
       let upserted = 0;
       for (const r of preview.valid) {
         await saveScores(r.studentId, r.values);
         upserted += Object.keys(r.values).length;
       }
+
+      // Second pass: insert previously-unmatched rows as NEW students if the
+      // toggle is on. We use the student-field mapping to extract name / dob /
+      // category / etc. from the same sheet, then save scores for the freshly
+      // created student.
+      let created = 0;
+      const stillInvalid: { row: number; reason: string }[] = [];
+      if (createMissing) {
+        for (const inv of preview.invalid) {
+          const raw = inv.raw;
+          const get = (col: string | null) => col ? String(raw[col] ?? "").trim() : "";
+          const fullName = get(mapping.student.full_name) || get(mapping.name);
+          if (!fullName) {
+            stillInvalid.push({ row: inv.row, reason: "No name to create from" });
+            continue;
+          }
+          const insert: StudentInsert = {
+            student_code: get(mapping.student.student_code) || null,
+            exam_code: get(mapping.student.exam_code) || get(mapping.code) || null,
+            barcode: null,
+            full_name: fullName,
+            dob: normalizeDob(mapping.student.dob ? raw[mapping.student.dob] : ""),
+            gender: get(mapping.student.gender) || null,
+            category: get(mapping.student.category) || null,
+            level: null,
+            listening_category: null,
+            listening_code: null,
+            centre: get(mapping.student.centre) || null,
+            teacher: get(mapping.student.teacher) || null,
+            ci_code: null,
+            tshirt_size: null,
+            email: get(mapping.student.email) || null,
+            phone: get(mapping.student.phone) || null,
+            report_time: null,
+            comp_time: null,
+            deduction: null,
+            notes: null,
+            extra: {},
+          };
+          try {
+            const newStudent = await upsertStudent(insert);
+            created += 1;
+            // Save scores for this newly-created student.
+            const values: Record<number, number> = {};
+            for (const [typeIdStr, col] of Object.entries(mapping.types)) {
+              if (!col) continue;
+              const v = Number(raw[col]);
+              if (Number.isFinite(v)) {
+                const qt = questionTypes.find((q) => q.id === Number(typeIdStr));
+                const max = qt ? qt.max_questions : Infinity;
+                values[Number(typeIdStr)] = Math.max(0, Math.min(max, v));
+              }
+            }
+            if (Object.keys(values).length > 0) {
+              await saveScores(newStudent.id, values);
+              upserted += Object.keys(values).length;
+            }
+          } catch (e) {
+            stillInvalid.push({
+              row: inv.row,
+              reason: e instanceof Error ? `Couldn't create student: ${e.message}` : "Couldn't create student",
+            });
+          }
+        }
+      } else {
+        // Mode is "match only" — preserve original reasons.
+        for (const inv of preview.invalid) {
+          stillInvalid.push({ row: inv.row, reason: inv.reason });
+        }
+      }
+
       setResult({
+        created,
         matched: preview.valid.length,
         upserted,
-        invalid: preview.invalid.length,
-        samples: preview.invalid.slice(0, 10).map(({ row, reason }) => ({ row, reason })),
+        invalid: stillInvalid.length,
+        samples: stillInvalid.slice(0, 10),
       });
       setStage("done");
       onComplete();
     } catch (e) {
+      console.error("[scores.bulk-import] failed", e);
       toast.error(asMsg(e, "Import failed"));
     } finally {
       setBusy(false);
@@ -746,6 +874,13 @@ function ScoreImportModal({
             <span className="font-medium text-[#1F1E1B]">{data.sheetName}</span> ·{" "}
             <span className="font-medium text-[#1F1E1B]">{data.rowCount}</span> rows
           </div>
+          {students.length === 0 && (
+            <div className="text-[12px] text-[#B8651A] bg-[#FAF1E5] border border-[#F0DEB8] rounded-md p-3 leading-relaxed">
+              <strong>The students table is empty.</strong> The "Also create missing students"
+              option below has been turned on for you — every row in the sheet will be inserted
+              as a new student before its scores are saved.
+            </div>
+          )}
           {data.sheets.length > 1 && (
             <div>
               <Label>Sheet</Label>
@@ -806,6 +941,117 @@ function ScoreImportModal({
               </div>
             ))}
           </div>
+
+          <div className="border-t border-[#F0EDE5] pt-3 mt-2">
+            <label className="flex items-start gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                className="mt-0.5 accent-[#1B3A6B]"
+                checked={createMissing}
+                onChange={(e) => setCreateMissing(e.target.checked)}
+              />
+              <span>
+                <span className="text-[13px] font-medium text-[#1F1E1B] block">
+                  Also create missing students from this sheet
+                </span>
+                <span className="text-[11px] text-[#7A7770] block leading-relaxed">
+                  Use this when the sheet is the master list with score columns added. Rows that
+                  don&apos;t match an existing student will be inserted with the fields you map below,
+                  then their scores are saved.
+                </span>
+              </span>
+            </label>
+          </div>
+
+          {createMissing && (
+            <div className="border border-[#E8E3D7] rounded-md p-3 space-y-3">
+              <div className="text-[12px] uppercase tracking-wider text-[#7A7770]">
+                Student field mapping (used only for newly created students)
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <StudentMap
+                  label="Full Name *"
+                  value={mapping.student.full_name}
+                  headers={data.headers}
+                  onChange={(v) =>
+                    setMapping((m) => ({ ...m, student: { ...m.student, full_name: v } }))
+                  }
+                />
+                <StudentMap
+                  label="Date of Birth"
+                  value={mapping.student.dob}
+                  headers={data.headers}
+                  onChange={(v) =>
+                    setMapping((m) => ({ ...m, student: { ...m.student, dob: v } }))
+                  }
+                />
+                <StudentMap
+                  label="Category"
+                  value={mapping.student.category}
+                  headers={data.headers}
+                  onChange={(v) =>
+                    setMapping((m) => ({ ...m, student: { ...m.student, category: v } }))
+                  }
+                />
+                <StudentMap
+                  label="Centre"
+                  value={mapping.student.centre}
+                  headers={data.headers}
+                  onChange={(v) =>
+                    setMapping((m) => ({ ...m, student: { ...m.student, centre: v } }))
+                  }
+                />
+                <StudentMap
+                  label="Teacher"
+                  value={mapping.student.teacher}
+                  headers={data.headers}
+                  onChange={(v) =>
+                    setMapping((m) => ({ ...m, student: { ...m.student, teacher: v } }))
+                  }
+                />
+                <StudentMap
+                  label="Student Code"
+                  value={mapping.student.student_code}
+                  headers={data.headers}
+                  onChange={(v) =>
+                    setMapping((m) => ({ ...m, student: { ...m.student, student_code: v } }))
+                  }
+                />
+                <StudentMap
+                  label="Exam Code"
+                  value={mapping.student.exam_code}
+                  headers={data.headers}
+                  onChange={(v) =>
+                    setMapping((m) => ({ ...m, student: { ...m.student, exam_code: v } }))
+                  }
+                />
+                <StudentMap
+                  label="Gender"
+                  value={mapping.student.gender}
+                  headers={data.headers}
+                  onChange={(v) =>
+                    setMapping((m) => ({ ...m, student: { ...m.student, gender: v } }))
+                  }
+                />
+                <StudentMap
+                  label="Email"
+                  value={mapping.student.email}
+                  headers={data.headers}
+                  onChange={(v) =>
+                    setMapping((m) => ({ ...m, student: { ...m.student, email: v } }))
+                  }
+                />
+                <StudentMap
+                  label="Phone"
+                  value={mapping.student.phone}
+                  headers={data.headers}
+                  onChange={(v) =>
+                    setMapping((m) => ({ ...m, student: { ...m.student, phone: v } }))
+                  }
+                />
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -815,8 +1061,9 @@ function ScoreImportModal({
             <div className="text-4xl mb-2">✓</div>
             <div className="text-base font-semibold text-[#1F1E1B] mb-1">Import complete</div>
             <div className="text-sm text-[#7A7770]">
-              {result.matched} students matched · {result.upserted} score values written ·{" "}
-              {result.invalid} rows skipped
+              {result.created > 0 && `${result.created} new student${result.created === 1 ? "" : "s"} created · `}
+              {result.matched} matched · {result.upserted} score values written ·{" "}
+              {result.invalid} skipped
             </div>
           </div>
           {result.invalid > 0 && (
@@ -852,6 +1099,27 @@ function ScoreImportModal({
 function asMsg(e: unknown, fallback: string): string {
   if (e instanceof Error) return e.message;
   return fallback;
+}
+
+function StudentMap({
+  label, value, headers, onChange,
+}: {
+  label: string;
+  value: string | null;
+  headers: string[];
+  onChange: (v: string | null) => void;
+}) {
+  return (
+    <div>
+      <Label className="text-[11px] text-[#7A7770]">{label}</Label>
+      <Select value={value ?? ""} onChange={(e) => onChange(e.target.value || null)}>
+        <option value="">— Not mapped —</option>
+        {headers.map((h) => (
+          <option key={h} value={h}>{h}</option>
+        ))}
+      </Select>
+    </div>
+  );
 }
 
 function CategoryMultiSelect({
