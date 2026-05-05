@@ -678,13 +678,6 @@ function StudentDetailModal({
           <DetailField label="Deduction" value={student.deduction} />
         </DetailGroup>
 
-        {student.extra && Object.keys(student.extra).length > 0 && (
-          <DetailGroup title="Extra (unmapped columns from import)">
-            {Object.entries(student.extra).map(([k, v]) => (
-              <DetailField key={k} label={k} value={v == null ? null : String(v)} />
-            ))}
-          </DetailGroup>
-        )}
       </div>
     </Modal>
   );
