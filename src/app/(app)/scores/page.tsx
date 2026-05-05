@@ -24,7 +24,10 @@ import {
   downloadText, downloadWorkbook, leaderboardToCsv, leaderboardToWorkbook,
 } from "@/lib/excel";
 import { buildLeaderboard } from "@/lib/ranking";
-import { saveStudentScores as saveScores, upsertStudent } from "@/lib/data";
+import {
+  saveStudentScores as saveScores, upsertStudent,
+  bulkInsertStudentsReturning, bulkUpsertScores,
+} from "@/lib/data";
 import type {
   LeaderboardRow, QuestionType, Score, Student, StudentInsert,
   TrophyAllocation, TrophyType,
@@ -610,6 +613,7 @@ function ScoreImportModal({
   // columns added — students+scores import in one shot.
   const [createMissing, setCreateMissing] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
+  const [progress, setProgress] = React.useState<{ phase: string; done: number; total: number } | null>(null);
   const [result, setResult] = React.useState<{
     created: number;
     matched: number;
@@ -709,28 +713,55 @@ function ScoreImportModal({
     }
   }
 
+  /**
+   * Build the score rows for a given student id from a parsed sheet row,
+   * clamping each value to the question type's max.
+   */
+  function scoresForRow(studentId: number, raw: ParsedRow): {
+    student_id: number; question_type_id: number; value: number;
+  }[] {
+    const out: { student_id: number; question_type_id: number; value: number }[] = [];
+    for (const [typeIdStr, col] of Object.entries(mapping.types)) {
+      if (!col) continue;
+      const v = Number(raw[col]);
+      if (!Number.isFinite(v)) continue;
+      const qt = questionTypes.find((q) => q.id === Number(typeIdStr));
+      const max = qt ? qt.max_questions : Infinity;
+      out.push({
+        student_id: studentId,
+        question_type_id: Number(typeIdStr),
+        value: Math.max(0, Math.min(max, v)),
+      });
+    }
+    return out;
+  }
+
   async function commit() {
     if (!data) return;
     setBusy(true);
+    setProgress({ phase: "Matching existing students", done: 0, total: data.rows.length });
     try {
-      // First pass: try to match rows against existing students.
+      // ─────────────────────────────────────────────────────────────
+      // Phase 1: match every row against existing students. This is
+      // pure JS (no network), so it's fast even for 2.5k rows.
+      // ─────────────────────────────────────────────────────────────
       const preview = previewScoreImport(data.rows, mapping, students, questionTypes);
-      let upserted = 0;
-      for (const r of preview.valid) {
-        await saveScores(r.studentId, r.values);
-        upserted += Object.keys(r.values).length;
-      }
 
-      // Second pass: insert previously-unmatched rows as NEW students if the
-      // toggle is on. We use the student-field mapping to extract name / dob /
-      // category / etc. from the same sheet, then save scores for the freshly
-      // created student.
+      // ─────────────────────────────────────────────────────────────
+      // Phase 2: for rows that didn't match an existing student, build
+      // StudentInsert objects (if createMissing is on) and bulk-insert
+      // them in one batched round trip. The previous code did 2,517
+      // sequential POSTs ≈ 4–6 minutes. Batching cuts it to ~5 seconds.
+      // ─────────────────────────────────────────────────────────────
       let created = 0;
       const stillInvalid: { row: number; reason: string }[] = [];
+      const newStudentRows: { invIdx: number; insert: StudentInsert; rawRow: ParsedRow }[] = [];
+
       if (createMissing) {
-        for (const inv of preview.invalid) {
+        for (let i = 0; i < preview.invalid.length; i++) {
+          const inv = preview.invalid[i];
           const raw = inv.raw;
-          const get = (col: string | null) => col ? String(raw[col] ?? "").trim() : "";
+          const get = (col: string | null) => (col ? String(raw[col] ?? "").trim() : "");
           const fullName = get(mapping.student.full_name) || get(mapping.name);
           if (!fullName) {
             stillInvalid.push({ row: inv.row, reason: "No name to create from" });
@@ -759,38 +790,74 @@ function ScoreImportModal({
             notes: null,
             extra: {},
           };
-          try {
-            const newStudent = await upsertStudent(insert);
-            created += 1;
-            // Save scores for this newly-created student.
-            const values: Record<number, number> = {};
-            for (const [typeIdStr, col] of Object.entries(mapping.types)) {
-              if (!col) continue;
-              const v = Number(raw[col]);
-              if (Number.isFinite(v)) {
-                const qt = questionTypes.find((q) => q.id === Number(typeIdStr));
-                const max = qt ? qt.max_questions : Infinity;
-                values[Number(typeIdStr)] = Math.max(0, Math.min(max, v));
-              }
-            }
-            if (Object.keys(values).length > 0) {
-              await saveScores(newStudent.id, values);
-              upserted += Object.keys(values).length;
-            }
-          } catch (e) {
-            stillInvalid.push({
-              row: inv.row,
-              reason: e instanceof Error ? `Couldn't create student: ${e.message}` : "Couldn't create student",
-            });
-          }
+          newStudentRows.push({ invIdx: i, insert, rawRow: raw });
         }
       } else {
-        // Mode is "match only" — preserve original reasons.
         for (const inv of preview.invalid) {
           stillInvalid.push({ row: inv.row, reason: inv.reason });
         }
       }
 
+      const insertedStudents: Student[] = [];
+      if (newStudentRows.length > 0) {
+        setProgress({
+          phase: "Creating new students",
+          done: 0,
+          total: newStudentRows.length,
+        });
+        try {
+          const inserted = await bulkInsertStudentsReturning(
+            newStudentRows.map((r) => r.insert),
+            (done, total) => setProgress({ phase: "Creating new students", done, total })
+          );
+          insertedStudents.push(...inserted);
+          created = inserted.length;
+        } catch (e) {
+          // If bulk insert fails for any batch, mark all of them invalid.
+          const msg = e instanceof Error ? e.message : "Couldn't create students";
+          for (const r of newStudentRows) {
+            stillInvalid.push({
+              row: preview.invalid[r.invIdx].row,
+              reason: `Couldn't create student: ${msg}`,
+            });
+          }
+        }
+      }
+
+      // ─────────────────────────────────────────────────────────────
+      // Phase 3: build the full list of score rows from BOTH the matched
+      // students AND the newly inserted ones, then bulk-upsert in one
+      // batched call. ~2.5k score rows = 5 round trips.
+      // ─────────────────────────────────────────────────────────────
+      const scoreRows: { student_id: number; question_type_id: number; value: number }[] = [];
+      for (const r of preview.valid) {
+        for (const [qid, value] of Object.entries(r.values)) {
+          scoreRows.push({
+            student_id: r.studentId,
+            question_type_id: Number(qid),
+            value,
+          });
+        }
+      }
+      // Walk the inserted students in the SAME order we sent them — Supabase
+      // returns rows in insert order, so insertedStudents[i] corresponds to
+      // newStudentRows[i].rawRow.
+      for (let i = 0; i < insertedStudents.length; i++) {
+        const newSt = insertedStudents[i];
+        const raw = newStudentRows[i]?.rawRow;
+        if (!raw) continue;
+        scoreRows.push(...scoresForRow(newSt.id, raw));
+      }
+
+      let upserted = 0;
+      if (scoreRows.length > 0) {
+        setProgress({ phase: "Saving scores", done: 0, total: scoreRows.length });
+        upserted = await bulkUpsertScores(scoreRows, (done, total) =>
+          setProgress({ phase: "Saving scores", done, total })
+        );
+      }
+
+      setProgress(null);
       setResult({
         created,
         matched: preview.valid.length,
@@ -805,6 +872,7 @@ function ScoreImportModal({
       toast.error(asMsg(e, "Import failed"));
     } finally {
       setBusy(false);
+      setProgress(null);
     }
   }
 
@@ -826,7 +894,11 @@ function ScoreImportModal({
           <>
             <Button variant="outline" onClick={() => { reset(); }} disabled={busy}>Back</Button>
             <Button onClick={commit} disabled={busy || !mapping.name}>
-              {busy ? "Importing…" : "Import"}
+              {busy
+                ? progress
+                  ? `${progress.phase} (${progress.done}/${progress.total})`
+                  : "Importing…"
+                : "Import"}
             </Button>
           </>
         ) : (
@@ -869,6 +941,24 @@ function ScoreImportModal({
 
       {stage === "map" && data && (
         <div className="space-y-4">
+          {progress && (
+            <div className="border border-[#1B3A6B]/20 bg-[#F4F1E8] rounded-md p-3">
+              <div className="flex items-center justify-between text-[12.5px] text-[#1B3A6B] mb-2 font-medium">
+                <span>{progress.phase}…</span>
+                <span className="tabular-nums">
+                  {progress.done.toLocaleString()} / {progress.total.toLocaleString()}
+                </span>
+              </div>
+              <div className="h-2 bg-white rounded overflow-hidden border border-[#E8E3D7]">
+                <div
+                  className="h-full bg-[#1B3A6B] transition-all"
+                  style={{
+                    width: `${progress.total > 0 ? Math.min(100, (progress.done / progress.total) * 100) : 0}%`,
+                  }}
+                />
+              </div>
+            </div>
+          )}
           <div className="text-sm text-[#7A7770]">
             <span className="font-medium text-[#1F1E1B]">{data.fileName}</span> · sheet{" "}
             <span className="font-medium text-[#1F1E1B]">{data.sheetName}</span> ·{" "}

@@ -128,6 +128,55 @@ export async function bulkInsertStudents(rows: StudentInsert[]): Promise<number>
   return inserted;
 }
 
+/**
+ * Bulk insert AND return the inserted rows (with their generated IDs) in
+ * insert order. Used by the Bulk Import Scores → "create missing students"
+ * flow so we can immediately attach scores to the new students without
+ * re-querying the table.
+ */
+export async function bulkInsertStudentsReturning(
+  rows: StudentInsert[],
+  onProgress?: (done: number, total: number) => void
+): Promise<Student[]> {
+  if (rows.length === 0) return [];
+  const BATCH = 500;
+  const out: Student[] = [];
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const slice = rows.slice(i, i + BATCH);
+    const { data, error } = await supabase()
+      .from("students")
+      .insert(slice)
+      .select("*");
+    if (error) throw error;
+    out.push(...((data ?? []) as Student[]));
+    onProgress?.(out.length, rows.length);
+  }
+  return out;
+}
+
+/**
+ * Bulk upsert scores in 500-row batches. Each call writes ~500 rows in a
+ * single round trip vs the previous one-by-one loop.
+ */
+export async function bulkUpsertScores(
+  rows: { student_id: number; question_type_id: number; value: number }[],
+  onProgress?: (done: number, total: number) => void
+): Promise<number> {
+  if (rows.length === 0) return 0;
+  const BATCH = 500;
+  let done = 0;
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const slice = rows.slice(i, i + BATCH);
+    const { error } = await supabase()
+      .from("scores")
+      .upsert(slice, { onConflict: "student_id,question_type_id" });
+    if (error) throw error;
+    done += slice.length;
+    onProgress?.(done, rows.length);
+  }
+  return done;
+}
+
 // =============================================================
 // Question types
 // =============================================================
