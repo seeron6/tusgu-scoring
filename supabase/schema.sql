@@ -102,7 +102,7 @@ create table if not exists public.trophy_allocations (
 insert into public.question_types (name, points_per_question, max_questions, display_order, category_max_overrides)
 select * from (values
   ('Addition / Subtraction',    1, 150, 1, '{"A":200,"B":200,"C":200,"U":200,"V":200,"Y":200,"Z":200}'::jsonb),
-  ('Multiplication / Division', 1, 100, 2, '{}'::jsonb)
+  ('Multiplication / Division', 1, 100, 2, '{"A":0,"B":0,"C":0,"U":0,"V":0,"Y":0,"Z":0}'::jsonb)
 ) as v(name, ppq, mq, ord, overrides)
 where not exists (select 1 from public.question_types);
 

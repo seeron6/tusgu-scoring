@@ -14,9 +14,11 @@ import {
   listQuestionTypes, listScores, listStudents, listTrophyAllocations, listTrophyTypes,
 } from "@/lib/data";
 import { buildLeaderboard } from "@/lib/ranking";
+import type { Score, Student, TrophyAllocation, TrophyType } from "@/lib/types";
 import {
   downloadText, downloadWorkbook, leaderboardToCsv, leaderboardToWorkbook,
 } from "@/lib/excel";
+import { maxQuestionsFor } from "@/lib/utils";
 import type { LeaderboardRow, QuestionType } from "@/lib/types";
 
 export default function LeaderboardPage() {
@@ -32,6 +34,12 @@ function LeaderboardInner() {
   const [questionTypes, setQuestionTypes] = React.useState<QuestionType[]>([]);
   const [trophiesApplied, setTrophiesApplied] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
+  // Cached source data for exports — exports rebuild with applyTrophies: true
+  // regardless of the on-page toggle so the Trophy column is always populated.
+  const sourceRef = React.useRef<{
+    students: Student[]; scores: Score[]; questionTypes: QuestionType[];
+    trophyTypes: TrophyType[]; trophyAllocations: TrophyAllocation[];
+  } | null>(null);
 
   const [catFilter, setCatFilter] = React.useState<string[]>([]);
   const [centreFilter, setCentreFilter] = React.useState<string[]>([]);
@@ -51,6 +59,7 @@ function LeaderboardInner() {
         listTrophyTypes(),
         listTrophyAllocations(),
       ]);
+      sourceRef.current = { students, scores, questionTypes: qts, trophyTypes, trophyAllocations };
       const built = buildLeaderboard({
         students,
         scores,
@@ -66,6 +75,35 @@ function LeaderboardInner() {
     } finally {
       setLoading(false);
     }
+  }
+
+  /**
+   * Re-build the leaderboard fresh with trophies applied so exports always
+   * reflect the latest scores AND have the Trophy column populated, even if
+   * the on-page "Apply trophies" toggle is off.
+   */
+  function buildExportRows(): LeaderboardRow[] {
+    const src = sourceRef.current;
+    if (!src) return [];
+    const fresh = buildLeaderboard({
+      students: src.students,
+      scores: src.scores,
+      questionTypes: src.questionTypes,
+      trophyTypes: src.trophyTypes,
+      trophyAllocations: src.trophyAllocations,
+      applyTrophies: true,
+    });
+    // Apply the same filters used on the page so the export matches what the
+    // user is looking at.
+    return fresh.filter((r) => {
+      const cat = r.student.category ?? "(uncategorised)";
+      if (catFilter.length && !catFilter.includes(cat)) return false;
+      if (centreFilter.length && !centreFilter.includes(r.student.centre ?? "")) return false;
+      if (teacherFilter.length && !teacherFilter.includes(r.student.teacher ?? "")) return false;
+      if (minScore !== "" && r.totalScore < Number(minScore)) return false;
+      if (maxScore !== "" && r.totalScore > Number(maxScore)) return false;
+      return true;
+    });
   }
   React.useEffect(() => {
     load(false);
@@ -224,7 +262,7 @@ function LeaderboardInner() {
       <ExportModal
         open={exportOpen}
         onClose={() => setExportOpen(false)}
-        rows={filtered}
+        getRows={buildExportRows}
         questionTypes={questionTypes}
       />
     </div>
@@ -286,6 +324,12 @@ function CategorySection({
                 <td><RankBadge rank={r.rank} /></td>
                 <td className="font-medium">{r.student.full_name}</td>
                 {questionTypes.map((qt) => {
+                  const cap = maxQuestionsFor(qt, r.student.category);
+                  if (cap === 0) {
+                    return (
+                      <td key={qt.id} className="text-right text-[#A8A39B]">—</td>
+                    );
+                  }
                   const correct = r.scoresByType[qt.id] ?? 0;
                   const points = correct * qt.points_per_question;
                   return (
@@ -397,11 +441,11 @@ function FilterChip({
 type ExportFormat = "xlsx" | "csv" | "pdf" | "jpeg" | "png";
 
 function ExportModal({
-  open, onClose, rows, questionTypes,
+  open, onClose, getRows, questionTypes,
 }: {
   open: boolean;
   onClose: () => void;
-  rows: LeaderboardRow[];
+  getRows: () => LeaderboardRow[];
   questionTypes: QuestionType[];
 }) {
   const [format, setFormat] = React.useState<ExportFormat>("xlsx");
@@ -412,6 +456,9 @@ function ExportModal({
     setBusy(true);
     try {
       const stamp = new Date().toISOString().slice(0, 10);
+      // Build fresh on every export so trophies are applied and ranks reflect
+      // the latest score edits — never the stale on-page snapshot.
+      const rows = getRows();
       if (format === "xlsx") {
         const buf = leaderboardToWorkbook(rows, questionTypes, { hideScores });
         downloadWorkbook(buf, `tusgu-leaderboard-${stamp}.xlsx`);

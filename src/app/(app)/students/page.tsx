@@ -1,7 +1,8 @@
 "use client";
 import * as React from "react";
 import {
-  Plus, Pencil, Trash2, Upload, Users, Search, Download, ScanLine, Camera,
+  Plus, Pencil, Trash2, Upload, Users, Search, Download, ScanLine,
+  Columns3,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { Button } from "@/components/ui/button";
@@ -41,11 +42,26 @@ const TABLE_COLUMNS: { key: keyof Student; label: string; render?: (s: Student) 
   { key: "phone", label: "Phone" },
 ];
 
+const COLUMN_PREF_KEY = "tusgu.students.hidden-columns";
+
 export default function StudentsPage() {
   const [students, setStudents] = React.useState<Student[] | null>(null);
   const [search, setSearch] = React.useState("");
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState(25);
+  const [hiddenColumns, setHiddenColumns] = React.useState<Set<string>>(() => {
+    if (typeof window === "undefined") return new Set();
+    try {
+      const raw = window.localStorage.getItem(COLUMN_PREF_KEY);
+      if (raw) return new Set(JSON.parse(raw) as string[]);
+    } catch {/* ignore */}
+    return new Set();
+  });
+
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(COLUMN_PREF_KEY, JSON.stringify(Array.from(hiddenColumns)));
+  }, [hiddenColumns]);
   const [editing, setEditing] = React.useState<Student | null>(null);
   const [editOpen, setEditOpen] = React.useState(false);
   const [importOpen, setImportOpen] = React.useState(false);
@@ -71,10 +87,12 @@ export default function StudentsPage() {
     load();
   }, []);
 
-  const visibleColumns = React.useMemo(() => {
+  // Columns we COULD show (those with at least one populated row, or sensible defaults).
+  const availableColumns = React.useMemo(() => {
     if (!students || students.length === 0) {
-      // Show a sensible default until we have data so the table doesn't look empty.
-      return TABLE_COLUMNS.filter((c) => ["full_name", "dob", "gender", "category", "centre", "teacher", "email"].includes(c.key as string));
+      return TABLE_COLUMNS.filter((c) =>
+        ["full_name", "dob", "gender", "category", "centre", "teacher", "email"].includes(c.key as string)
+      );
     }
     return TABLE_COLUMNS.filter((c) =>
       students.some((s) => {
@@ -83,6 +101,21 @@ export default function StudentsPage() {
       })
     );
   }, [students]);
+
+  // Columns the user actually wants on screen (after their hide toggle).
+  const visibleColumns = React.useMemo(
+    () => availableColumns.filter((c) => !hiddenColumns.has(c.key as string)),
+    [availableColumns, hiddenColumns]
+  );
+
+  function toggleColumn(key: string) {
+    setHiddenColumns((s) => {
+      const next = new Set(s);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   const filtered = React.useMemo(() => {
     if (!students) return [];
@@ -232,6 +265,12 @@ export default function StudentsPage() {
           <div className="text-sm text-[#7A7770] sm:ml-auto">
             {filtered.length} student{filtered.length !== 1 ? "s" : ""}
           </div>
+          <ColumnsMenu
+            columns={availableColumns}
+            hidden={hiddenColumns}
+            onToggle={toggleColumn}
+            onResetAll={() => setHiddenColumns(new Set())}
+          />
           <Select
             value={pageSize}
             onChange={(e) => setPageSize(Number(e.target.value))}
@@ -379,6 +418,53 @@ export default function StudentsPage() {
         }}
       />
     </div>
+  );
+}
+
+function ColumnsMenu({
+  columns, hidden, onToggle, onResetAll,
+}: {
+  columns: { key: keyof Student; label: string }[];
+  hidden: Set<string>;
+  onToggle: (key: string) => void;
+  onResetAll: () => void;
+}) {
+  return (
+    <details className="relative">
+      <summary className="h-9 px-3 rounded-md border border-[#E8E3D7] bg-white text-[12.5px] flex items-center gap-1.5 cursor-pointer hover:border-[#D9D2BE] list-none">
+        <Columns3 className="w-3.5 h-3.5 text-[#7A7770]" />
+        <span className="hidden sm:inline">Columns</span>
+        {hidden.size > 0 && (
+          <span className="text-[10px] uppercase tracking-wide px-1.5 rounded bg-[#F4F1E8] text-[#1B3A6B]">
+            {hidden.size} hidden
+          </span>
+        )}
+      </summary>
+      <div className="absolute right-0 z-20 mt-1 w-60 max-h-72 overflow-y-auto bg-white border border-[#E8E3D7] rounded-md shadow-lg p-1.5">
+        <div className="flex justify-between items-center px-2 py-1 border-b border-[#F0EDE5] mb-1">
+          <span className="text-[10px] uppercase tracking-wider text-[#7A7770]">Show columns</span>
+          {hidden.size > 0 && (
+            <button onClick={onResetAll} className="text-[11px] text-[#1B3A6B] hover:underline">
+              Show all
+            </button>
+          )}
+        </div>
+        {columns.map((c) => (
+          <label
+            key={String(c.key)}
+            className="flex items-center gap-2 px-2 py-1.5 hover:bg-[#F4F1E8] rounded cursor-pointer text-[13px]"
+          >
+            <input
+              type="checkbox"
+              className="accent-[#1B3A6B]"
+              checked={!hidden.has(c.key as string)}
+              onChange={() => onToggle(c.key as string)}
+            />
+            <span>{c.label}</span>
+          </label>
+        ))}
+      </div>
+    </details>
   );
 }
 

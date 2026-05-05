@@ -45,8 +45,12 @@ export function formatDate(dob: string | null | undefined): string {
 
 /**
  * Resolve max questions for a question type given a student's category.
- * Looks up the first letter of the category in `category_max_overrides`,
- * falling back to the question type's base max_questions.
+ *
+ * Looks up the first letter of the category in `category_max_overrides`:
+ *   - undefined / no entry → fall back to the question type's base max_questions
+ *   - a positive number → use that override
+ *   - 0 → this question type does NOT apply to this category (e.g.
+ *     Multiplication / Division is skipped for A/B/C/U/V/Y/Z)
  */
 export function maxQuestionsFor(
   qt: { max_questions: number; category_max_overrides?: Record<string, number> | null },
@@ -56,7 +60,15 @@ export function maxQuestionsFor(
   const prefix = category.trim().charAt(0).toUpperCase();
   const overrides = qt.category_max_overrides ?? {};
   const v = overrides[prefix];
-  return typeof v === "number" && v > 0 ? v : qt.max_questions;
+  if (typeof v === "number") return Math.max(0, v); // 0 = "not applicable"
+  return qt.max_questions;
+}
+
+export function isQuestionTypeApplicable(
+  qt: { max_questions: number; category_max_overrides?: Record<string, number> | null },
+  category: string | null | undefined
+): boolean {
+  return maxQuestionsFor(qt, category) > 0;
 }
 
 /** Like a useEffect but stable across re-renders for fetching once. */

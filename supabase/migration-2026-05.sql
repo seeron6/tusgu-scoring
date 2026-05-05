@@ -31,3 +31,13 @@ update public.trophy_types set points = 25 where name = '3rd Runner Up'   and po
 update public.trophy_types set points = 20 where name = '4th Runner Up'   and points = 0;
 update public.trophy_types set points = 10 where name = '5th Runner Up'   and points = 0;
 update public.trophy_types set points =  5 where name = 'Merit'           and points = 0;
+
+-- =============================================================
+-- Multiplication / Division does NOT apply to categories starting with
+-- A, B, C, U, V, Y, Z. Convention: a 0 entry in category_max_overrides
+-- means "skip this question type for this category".
+-- =============================================================
+update public.question_types
+set category_max_overrides = '{"A":0,"B":0,"C":0,"U":0,"V":0,"Y":0,"Z":0}'::jsonb
+where name = 'Multiplication / Division'
+  and category_max_overrides::text in ('{}', 'null');

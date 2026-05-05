@@ -32,14 +32,17 @@ function stripEmoji(s: string): string {
 }
 
 function header(doc: jsPDF, title: string, subtitle?: string) {
+  // "TUSGU" + tagline on one line — measure the brand text so the tagline
+  // never overlaps it (the bug that produced "TUSGUucational Services").
   doc.setTextColor(...NAVY);
   doc.setFont("helvetica", "bold");
   doc.setFontSize(20);
   doc.text("TUSGU", 40, 50);
+  const tusguWidth = doc.getTextWidth("TUSGU");
   doc.setFont("helvetica", "normal");
   doc.setFontSize(9);
   doc.setTextColor(...MUTED);
-  doc.text("Educational Services - Competition Portal", 80, 50);
+  doc.text("Educational Services — Competition Portal", 40 + tusguWidth + 12, 50);
 
   doc.setTextColor(...TEXT);
   doc.setFont("helvetica", "bold");

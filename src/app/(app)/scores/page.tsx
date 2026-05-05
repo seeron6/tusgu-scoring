@@ -1,7 +1,8 @@
 "use client";
 import * as React from "react";
 import {
-  ClipboardList, Search, Save, Upload, Users, ScanLine, X,
+  ClipboardList, Search, Save, Upload, Users, ScanLine, X, Download,
+  FileSpreadsheet, FileText, FileType,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { Button } from "@/components/ui/button";
@@ -14,15 +15,19 @@ import { BarcodeScannerModal } from "@/components/barcode-scanner";
 import { ProtectedPage } from "@/lib/auth-gate";
 import { maxQuestionsFor } from "@/lib/utils";
 import {
-  findStudentByCode, getStudentScores, listQuestionTypes, listStudents,
-  saveStudentScores,
+  findStudentByCode, getStudentScores, listQuestionTypes, listScores,
+  listStudents, listTrophyAllocations, listTrophyTypes, saveStudentScores,
 } from "@/lib/data";
 import {
   parseWorkbook, autoMapColumns, previewScoreImport,
   type ParsedRow,
+  downloadText, downloadWorkbook, leaderboardToCsv, leaderboardToWorkbook,
 } from "@/lib/excel";
+import { buildLeaderboard } from "@/lib/ranking";
 import { saveStudentScores as saveScores } from "@/lib/data";
-import type { QuestionType, Student } from "@/lib/types";
+import type {
+  LeaderboardRow, QuestionType, Score, Student, TrophyAllocation, TrophyType,
+} from "@/lib/types";
 
 export default function ScoresPage() {
   return (
@@ -44,6 +49,7 @@ function ScoresInner() {
   const [busy, setBusy] = React.useState(false);
   const [importOpen, setImportOpen] = React.useState(false);
   const [scannerOpen, setScannerOpen] = React.useState(false);
+  const [exportOpen, setExportOpen] = React.useState(false);
 
   async function loadAll() {
     try {
@@ -158,6 +164,10 @@ function ScoresInner() {
             <Button variant="outline" onClick={() => setImportOpen(true)}>
               <Upload className="w-4 h-4" />
               <span className="hidden sm:inline">Bulk Import</span>
+            </Button>
+            <Button variant="outline" onClick={() => setExportOpen(true)}>
+              <Download className="w-4 h-4" />
+              <span className="hidden sm:inline">Export</span>
             </Button>
           </>
         }
@@ -275,6 +285,23 @@ function ScoresInner() {
                     const cap = maxQuestionsFor(qt, selectedCategory);
                     const points = correct * qt.points_per_question;
                     const maxPoints = qt.points_per_question * cap;
+                    if (cap === 0) {
+                      // Question type isn't part of this category's competition
+                      // (e.g. Multiplication / Division for A1).
+                      return (
+                        <div key={qt.id} className="opacity-60">
+                          <Label>
+                            {qt.name}{" "}
+                            <span className="text-xs text-[#7A7770] font-normal">
+                              (not applicable for {selectedCategory})
+                            </span>
+                          </Label>
+                          <div className="h-9 w-full rounded-md border border-[#E8E3D7] bg-[#F5F2EB] flex items-center px-3 text-[12px] text-[#7A7770]">
+                            —
+                          </div>
+                        </div>
+                      );
+                    }
                     return (
                       <div key={qt.id}>
                         <Label>
@@ -342,8 +369,195 @@ function ScoresInner() {
         onClose={() => setScannerOpen(false)}
         onResult={handleScan}
       />
+      <ScoresExportModal
+        open={exportOpen}
+        onClose={() => setExportOpen(false)}
+      />
     </div>
   );
+}
+
+// =============================================================
+// Export modal — same options as Leaderboard (xlsx / csv / pdf / images)
+// but pulls fresh data with trophies applied so the Trophy column is
+// populated regardless of any on-screen toggle.
+// =============================================================
+
+type ExportFormat = "xlsx" | "csv" | "pdf" | "jpeg" | "png";
+
+function ScoresExportModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [format, setFormat] = React.useState<ExportFormat>("xlsx");
+  const [hideScores, setHideScores] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+
+  async function buildRows(): Promise<{ rows: LeaderboardRow[]; questionTypes: QuestionType[] }> {
+    const [students, scores, qts, trophyTypes, trophyAllocations]: [
+      Student[], Score[], QuestionType[], TrophyType[], TrophyAllocation[]
+    ] = await Promise.all([
+      listStudents(),
+      listScores(),
+      listQuestionTypes(),
+      listTrophyTypes(),
+      listTrophyAllocations(),
+    ]);
+    const rows = buildLeaderboard({
+      students, scores, questionTypes: qts, trophyTypes, trophyAllocations,
+      applyTrophies: true,
+    });
+    return { rows, questionTypes: qts };
+  }
+
+  async function run() {
+    setBusy(true);
+    try {
+      const stamp = new Date().toISOString().slice(0, 10);
+      const { rows, questionTypes } = await buildRows();
+      if (rows.length === 0) {
+        toast.error("Nothing to export — no students yet.");
+        return;
+      }
+      if (format === "xlsx") {
+        downloadWorkbook(
+          leaderboardToWorkbook(rows, questionTypes, { hideScores }),
+          `tusgu-scores-${stamp}.xlsx`
+        );
+      } else if (format === "csv") {
+        downloadText(
+          leaderboardToCsv(rows, questionTypes, { hideScores }),
+          `tusgu-scores-${stamp}.csv`
+        );
+      } else if (format === "pdf") {
+        const { leaderboardToPdf } = await import("@/lib/pdf");
+        const buf = leaderboardToPdf(rows, questionTypes, { hideScores });
+        downloadBuf(buf, `tusgu-scores-${stamp}.pdf`, "application/pdf");
+      } else {
+        // jpeg / png — capture each on-page student card. There isn't an
+        // export-section per student in this view, so for image exports we
+        // fall back to capturing the visible scoring panel.
+        const els = document.querySelectorAll<HTMLElement>("[data-export-section]");
+        if (els.length === 0) {
+          toast.error("Image export needs at least one visible scoring panel. Pick a student first.");
+          return;
+        }
+        const [{ default: html2canvas }, { default: JSZip }] = await Promise.all([
+          import("html2canvas-pro"),
+          import("jszip"),
+        ]);
+        const zip = new JSZip();
+        for (const el of Array.from(els)) {
+          const name = el.dataset.exportName?.replace(/[^A-Za-z0-9 _-]/g, "").trim() || "section";
+          const canvas = await html2canvas(el, {
+            backgroundColor: "#FFFFFF",
+            scale: 2,
+            useCORS: true,
+          });
+          const blob: Blob = await new Promise((resolve, reject) => {
+            canvas.toBlob(
+              (b) => (b ? resolve(b) : reject(new Error("Canvas to blob failed"))),
+              format === "jpeg" ? "image/jpeg" : "image/png",
+              format === "jpeg" ? 0.92 : undefined
+            );
+          });
+          zip.file(`${name}.${format === "jpeg" ? "jpg" : "png"}`, blob);
+        }
+        const out = await zip.generateAsync({ type: "blob" });
+        const url = URL.createObjectURL(out);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `tusgu-scores-${format}-${stamp}.zip`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+      toast.success("Export complete");
+      onClose();
+    } catch (e) {
+      console.error("[scores.export]", e);
+      toast.error(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={() => !busy && onClose()}
+      title="Export scores"
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose} disabled={busy}>Cancel</Button>
+          <Button onClick={run} disabled={busy}>{busy ? "Exporting…" : "Export"}</Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <div>
+          <Label>Format</Label>
+          <div className="grid grid-cols-2 gap-2">
+            <Tile id="xlsx"  current={format} setCurrent={setFormat} icon={<FileSpreadsheet className="w-4 h-4" />} title="Excel" sub=".xlsx workbook" />
+            <Tile id="csv"   current={format} setCurrent={setFormat} icon={<FileType className="w-4 h-4" />}        title="CSV" sub="Plain text" />
+            <Tile id="pdf"   current={format} setCurrent={setFormat} icon={<FileText className="w-4 h-4" />}        title="PDF" sub="Print-ready" />
+            <Tile id="jpeg"  current={format} setCurrent={setFormat} icon={<FileSpreadsheet className="w-4 h-4" />} title="JPEGs (zip)" sub="One per visible panel" />
+            <Tile id="png"   current={format} setCurrent={setFormat} icon={<FileSpreadsheet className="w-4 h-4" />} title="PNGs (zip)" sub="Lossless" />
+          </div>
+        </div>
+        {(format === "xlsx" || format === "csv" || format === "pdf") && (
+          <label className="flex items-start gap-2.5 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={hideScores}
+              onChange={(e) => setHideScores(e.target.checked)}
+              className="mt-0.5 accent-[#1B3A6B]"
+            />
+            <span>
+              <span className="text-[13px] font-medium text-[#1F1E1B] block">Hide individual scores</span>
+              <span className="text-[11px] text-[#7A7770]">Show only name / rank / trophy.</span>
+            </span>
+          </label>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+function Tile({
+  id, current, setCurrent, icon, title, sub,
+}: {
+  id: ExportFormat;
+  current: ExportFormat;
+  setCurrent: (v: ExportFormat) => void;
+  icon: React.ReactNode;
+  title: string;
+  sub: string;
+}) {
+  const active = current === id;
+  return (
+    <button
+      type="button"
+      onClick={() => setCurrent(id)}
+      className={`text-left p-3 rounded-lg border transition-all ${
+        active
+          ? "border-[#1B3A6B] bg-[#F4F1E8] ring-[3px] ring-[#1B3A6B]/12"
+          : "border-[#E8E3D7] hover:border-[#D9D2BE] bg-white"
+      }`}
+    >
+      <div className="flex items-center gap-2 mb-1">
+        <span className={active ? "text-[#1B3A6B]" : "text-[#7A7770]"}>{icon}</span>
+        <span className="text-[13px] font-semibold text-[#1F1E1B]">{title}</span>
+      </div>
+      <div className="text-[11px] text-[#7A7770]">{sub}</div>
+    </button>
+  );
+}
+
+function downloadBuf(buf: ArrayBuffer, filename: string, mime: string) {
+  const blob = new Blob([buf], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function ScoreImportModal({
@@ -371,7 +585,12 @@ function ScoreImportModal({
     types: Record<number, string | null>;
   }>({ name: null, code: null, types: {} });
   const [busy, setBusy] = React.useState(false);
-  const [result, setResult] = React.useState<{ matched: number; upserted: number; invalid: number } | null>(null);
+  const [result, setResult] = React.useState<{
+    matched: number;
+    upserted: number;
+    invalid: number;
+    samples: { row: number; reason: string }[];
+  } | null>(null);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
 
   function reset() {
@@ -450,6 +669,7 @@ function ScoreImportModal({
         matched: preview.valid.length,
         upserted,
         invalid: preview.invalid.length,
+        samples: preview.invalid.slice(0, 10).map(({ row, reason }) => ({ row, reason })),
       });
       setStage("done");
       onComplete();
@@ -590,13 +810,39 @@ function ScoreImportModal({
       )}
 
       {stage === "done" && result && (
-        <div className="text-center py-6">
-          <div className="text-4xl mb-2">✓</div>
-          <div className="text-base font-semibold text-[#1F1E1B] mb-1">Import complete</div>
-          <div className="text-sm text-[#7A7770]">
-            {result.matched} students matched · {result.upserted} score values written ·{" "}
-            {result.invalid} rows skipped
+        <div className="space-y-4 py-2">
+          <div className="text-center">
+            <div className="text-4xl mb-2">✓</div>
+            <div className="text-base font-semibold text-[#1F1E1B] mb-1">Import complete</div>
+            <div className="text-sm text-[#7A7770]">
+              {result.matched} students matched · {result.upserted} score values written ·{" "}
+              {result.invalid} rows skipped
+            </div>
           </div>
+          {result.invalid > 0 && (
+            <div className="border border-[#F0DEB8] bg-[#FAF1E5] rounded-md p-3">
+              <div className="text-[12.5px] font-medium text-[#7A4A0F] mb-1.5">
+                Why rows were skipped
+              </div>
+              <ul className="text-[11.5px] text-[#7A4A0F] space-y-1 list-disc list-inside">
+                {result.samples.map((s, i) => (
+                  <li key={i}>
+                    Row {s.row}: {s.reason}
+                  </li>
+                ))}
+                {result.invalid > result.samples.length && (
+                  <li className="list-none italic">
+                    …and {result.invalid - result.samples.length} more.
+                  </li>
+                )}
+              </ul>
+              <div className="text-[11px] text-[#7A4A0F] mt-2 leading-relaxed">
+                Tip: make sure the sheet has a column with student names <em>or</em> exam codes
+                that match what&apos;s already in the database. Use the Code dropdown above to point
+                at the right column.
+              </div>
+            </div>
+          )}
         </div>
       )}
     </Modal>

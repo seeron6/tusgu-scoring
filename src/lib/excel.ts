@@ -466,6 +466,14 @@ export type ScoreImportPreview = {
   invalid: { row: number; reason: string; raw: ParsedRow }[];
 };
 
+function normalizeNameKey(s: string): string {
+  return s.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function normalizeCodeKey(s: string): string {
+  return s.toUpperCase().replace(/\s+/g, "").trim();
+}
+
 export function previewScoreImport(
   rows: ParsedRow[],
   mapping: { name: string | null; code: string | null; types: Record<number, string | null> },
@@ -475,10 +483,10 @@ export function previewScoreImport(
   const byName = new Map<string, number>();
   const byCode = new Map<string, number>();
   for (const s of students) {
-    byName.set(s.full_name.toLowerCase().trim(), s.id);
-    if (s.exam_code) byCode.set(s.exam_code, s.id);
-    if (s.student_code) byCode.set(s.student_code, s.id);
-    if (s.barcode) byCode.set(s.barcode, s.id);
+    byName.set(normalizeNameKey(s.full_name), s.id);
+    if (s.exam_code) byCode.set(normalizeCodeKey(s.exam_code), s.id);
+    if (s.student_code) byCode.set(normalizeCodeKey(s.student_code), s.id);
+    if (s.barcode) byCode.set(normalizeCodeKey(s.barcode), s.id);
   }
   const qtById = new Map(questionTypes.map((q) => [q.id, q]));
 
@@ -486,12 +494,31 @@ export function previewScoreImport(
   rows.forEach((raw, idx) => {
     const name = mapping.name ? String(raw[mapping.name] ?? "").trim() : "";
     const code = mapping.code ? String(raw[mapping.code] ?? "").trim() : "";
-    const sid =
-      (code && byCode.get(code)) ?? (name && byName.get(name.toLowerCase())) ?? null;
+
+    let sid: number | undefined =
+      (code && byCode.get(normalizeCodeKey(code))) ||
+      (name && byName.get(normalizeNameKey(name))) ||
+      undefined;
+
+    // Last-ditch: if neither column was mapped explicitly, try EVERY raw cell
+    // against both lookups. This rescues sheets where the user picked the
+    // wrong column or the headers are unusual.
+    if (!sid) {
+      for (const v of Object.values(raw)) {
+        if (v == null || v === "") continue;
+        const s = String(v);
+        sid = byCode.get(normalizeCodeKey(s)) || byName.get(normalizeNameKey(s));
+        if (sid) break;
+      }
+    }
+
     if (!sid) {
       preview.invalid.push({
         row: idx + 2,
-        reason: name || code ? `Student "${name || code}" not found` : "Missing student name/code",
+        reason:
+          name || code
+            ? `Couldn't find student "${name || code}"`
+            : "No name or code column matched any student",
         raw,
       });
       return;
