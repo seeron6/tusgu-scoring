@@ -178,7 +178,7 @@ const FIELD_HINTS: Record<StudentField, string[]> = {
   full_name: ["student fullname", "fullname", "student full name", "full name", "student name", "name", "pupil", "child"],
   first_name: ["first name", "firstname", "given name", "fname"],
   last_name: ["last name", "lastname", "surname", "family name", "lname"],
-  dob: ["date of birth", "dob", "birth date", "birthdate", "birthday", "born"],
+  dob: ["date of birth", "dob", "birth date", "birthdate", "birthday", "born", "year of birth", "birth year", "yob"],
   gender: ["gender", "sex", "m/f", "male/female"],
   category: ["visual 2025 category", "category", "group", "division", "section", "class"],
   level: ["level as of", "current level", "level"],
@@ -247,6 +247,12 @@ const MONTHS: Record<string, number> = {
   jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12,
 };
 
+/**
+ * Treat values like "2012" or "May 2012" as legitimate partial DOBs. The
+ * underlying column is a Postgres `date`, so we still need to write a real
+ * date — the convention is `YYYY-01-01` for bare year and `YYYY-MM-15` for
+ * month+year. Age calculations stay close enough for ranking.
+ */
 export function normalizeDob(input: unknown): string | null {
   if (input == null || input === "") return null;
   if (input instanceof Date) {
@@ -259,6 +265,34 @@ export function normalizeDob(input: unknown): string | null {
   }
   const raw = String(input).trim();
   if (!raw) return null;
+
+  // Year only: "2012", "2010". A plausible birth-year is 1900..2100; anything
+  // larger is almost certainly an Excel serial date.
+  const yearOnly = raw.match(/^(19|20)\d{2}$/);
+  if (yearOnly) {
+    const y = parseInt(yearOnly[0], 10);
+    return `${y}-01-01`;
+  }
+
+  // Month + year: "May 2012", "Nov 2010", "May-2012".
+  const monYr = raw.match(/^([A-Za-z]{3,9})[\s\-\/.]+(\d{4})$/);
+  if (monYr) {
+    const m = MONTHS[monYr[1].slice(0, 3).toLowerCase()];
+    const y = parseInt(monYr[2], 10);
+    if (m && y >= 1900 && y <= 2100) {
+      return `${y}-${String(m).padStart(2, "0")}-15`;
+    }
+  }
+
+  // Year + month (no day): "2012-May", "2012-Nov", "2012/Nov".
+  const yrMon = raw.match(/^(\d{4})[\s\-\/.]+([A-Za-z]{3,9})$/);
+  if (yrMon) {
+    const y = parseInt(yrMon[1], 10);
+    const m = MONTHS[yrMon[2].slice(0, 3).toLowerCase()];
+    if (m && y >= 1900 && y <= 2100) {
+      return `${y}-${String(m).padStart(2, "0")}-15`;
+    }
+  }
 
   // ISO already
   if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
@@ -291,16 +325,20 @@ export function normalizeDob(input: unknown): string | null {
   }
 
   // Excel serial (raw number persisted as a string by `raw: false`).
-  // Build a UTC Date and read UTC components so we don't shift across timezones.
-  if (/^\d{4,6}$/.test(raw)) {
+  // Modern dates start at serial 25569 (1970-01-01) and competition kids will
+  // be 1990s-2020s, so legitimate values are 5-6 digits ≥ 25000. The 4-digit
+  // bare year case is handled above and never reaches here.
+  if (/^\d{5,6}$/.test(raw)) {
     const serial = parseInt(raw, 10);
-    const utcMs = Date.UTC(1899, 11, 30) + serial * 86400 * 1000;
-    const d = new Date(utcMs);
-    if (!isNaN(d.getTime())) {
-      const y = d.getUTCFullYear();
-      const m = String(d.getUTCMonth() + 1).padStart(2, "0");
-      const day = String(d.getUTCDate()).padStart(2, "0");
-      return `${y}-${m}-${day}`;
+    if (serial >= 25000 && serial < 80000) {
+      const utcMs = Date.UTC(1899, 11, 30) + serial * 86400 * 1000;
+      const d = new Date(utcMs);
+      if (!isNaN(d.getTime())) {
+        const y = d.getUTCFullYear();
+        const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+        const day = String(d.getUTCDate()).padStart(2, "0");
+        return `${y}-${m}-${day}`;
+      }
     }
   }
 
