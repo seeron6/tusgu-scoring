@@ -19,6 +19,7 @@ import {
   downloadText, downloadWorkbook, leaderboardToCsv, leaderboardToWorkbook,
 } from "@/lib/excel";
 import { maxQuestionsFor } from "@/lib/utils";
+import { ColumnsMenu, useHiddenColumns } from "@/components/columns-menu";
 import type { LeaderboardRow, QuestionType } from "@/lib/types";
 
 export default function LeaderboardPage() {
@@ -48,6 +49,7 @@ function LeaderboardInner() {
   const [maxScore, setMaxScore] = React.useState("");
   const [topN, setTopN] = React.useState<number>(10); // 10 = top-10 per cat by default; 0 = show all
   const [exportOpen, setExportOpen] = React.useState(false);
+  const cols = useHiddenColumns("tusgu.leaderboard.hidden-columns");
 
   async function load(applyTrophies: boolean) {
     setLoading(true);
@@ -167,6 +169,23 @@ function LeaderboardInner() {
         description="Rankings group by category, ordered by score, then DOB (younger wins ties), then alphabetical."
         actions={
           <>
+            <ColumnsMenu
+              columns={[
+                { key: "rank", label: "Rank" },
+                { key: "name", label: "Name" },
+                ...questionTypes.map((qt) => ({ key: `qt-${qt.id}`, label: qt.name })),
+                { key: "total", label: "Total" },
+                { key: "percentage", label: "%" },
+                { key: "trophy", label: "Trophy" },
+                { key: "dob", label: "DOB" },
+                { key: "age", label: "Age" },
+                { key: "centre", label: "Centre" },
+                { key: "teacher", label: "Teacher" },
+              ]}
+              hidden={cols.hidden}
+              onToggle={cols.toggle}
+              onResetAll={cols.reset}
+            />
             <Button variant="outline" onClick={() => setExportOpen(true)}>
               <Download className="w-4 h-4" />
               <span className="hidden sm:inline">Export</span>
@@ -254,6 +273,7 @@ function LeaderboardInner() {
               rows={list}
               questionTypes={questionTypes}
               showTrophy={trophiesApplied}
+              isVisible={cols.isVisible}
             />
           ))}
         </div>
@@ -270,12 +290,13 @@ function LeaderboardInner() {
 }
 
 function CategorySection({
-  category, rows, questionTypes, showTrophy,
+  category, rows, questionTypes, showTrophy, isVisible,
 }: {
   category: string;
   rows: LeaderboardRow[];
   questionTypes: QuestionType[];
   showTrophy: boolean;
+  isVisible: (key: string) => boolean;
 }) {
   const top = rows[0];
   return (
@@ -304,26 +325,29 @@ function CategorySection({
         <table className="tusgu-table">
           <thead>
             <tr>
-              <th className="w-12">Rank</th>
-              <th>Name</th>
-              {questionTypes.map((qt) => (
-                <th key={qt.id} className="text-right">{qt.name}</th>
-              ))}
-              <th className="text-right">Total</th>
-              <th className="text-right">%</th>
-              {showTrophy && <th>Trophy</th>}
-              <th>DOB</th>
-              <th>Age</th>
-              <th>Centre</th>
-              <th>Teacher</th>
+              {isVisible("rank") && <th className="w-12">Rank</th>}
+              {isVisible("name") && <th>Name</th>}
+              {questionTypes.map((qt) =>
+                isVisible(`qt-${qt.id}`) ? (
+                  <th key={qt.id} className="text-right">{qt.name}</th>
+                ) : null
+              )}
+              {isVisible("total") && <th className="text-right">Total</th>}
+              {isVisible("percentage") && <th className="text-right">%</th>}
+              {showTrophy && isVisible("trophy") && <th>Trophy</th>}
+              {isVisible("dob") && <th>DOB</th>}
+              {isVisible("age") && <th>Age</th>}
+              {isVisible("centre") && <th>Centre</th>}
+              {isVisible("teacher") && <th>Teacher</th>}
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.student.id}>
-                <td><RankBadge rank={r.rank} /></td>
-                <td className="font-medium">{r.student.full_name}</td>
+                {isVisible("rank") && <td><RankBadge rank={r.rank} /></td>}
+                {isVisible("name") && <td className="font-medium">{r.student.full_name}</td>}
                 {questionTypes.map((qt) => {
+                  if (!isVisible(`qt-${qt.id}`)) return null;
                   const cap = maxQuestionsFor(qt, r.student.category);
                   if (cap === 0) {
                     return (
@@ -339,9 +363,15 @@ function CategorySection({
                     </td>
                   );
                 })}
-                <td className="text-right font-semibold tabular-nums">{r.totalScore}</td>
-                <td className="text-right text-[#7A7770] tabular-nums">{r.percentage.toFixed(1)}%</td>
-                {showTrophy && (
+                {isVisible("total") && (
+                  <td className="text-right font-semibold tabular-nums">{r.totalScore}</td>
+                )}
+                {isVisible("percentage") && (
+                  <td className="text-right text-[#7A7770] tabular-nums">
+                    {r.percentage.toFixed(1)}%
+                  </td>
+                )}
+                {showTrophy && isVisible("trophy") && (
                   <td>
                     {r.trophy ? (
                       <TrophyChip name={r.trophy.name} icon={r.trophy.icon} order={r.trophy.display_order} />
@@ -350,10 +380,16 @@ function CategorySection({
                     )}
                   </td>
                 )}
-                <td className="text-[#7A7770]">{formatDate(r.student.dob)}</td>
-                <td className="text-[#4A4843]">{r.age ?? ""}</td>
-                <td className="text-[#4A4843]">{r.student.centre ?? ""}</td>
-                <td className="text-[#4A4843]">{r.student.teacher ?? ""}</td>
+                {isVisible("dob") && (
+                  <td className="text-[#7A7770]">{formatDate(r.student.dob)}</td>
+                )}
+                {isVisible("age") && <td className="text-[#4A4843]">{r.age ?? ""}</td>}
+                {isVisible("centre") && (
+                  <td className="text-[#4A4843]">{r.student.centre ?? ""}</td>
+                )}
+                {isVisible("teacher") && (
+                  <td className="text-[#4A4843]">{r.student.teacher ?? ""}</td>
+                )}
               </tr>
             ))}
           </tbody>

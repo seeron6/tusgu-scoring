@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { Card, CardHeader, PageHeader } from "@/components/sidebar";
 import { ProtectedPage } from "@/lib/auth-gate";
+import { ColumnsMenu, useHiddenColumns } from "@/components/columns-menu";
 import {
   deleteQuestionType, listQuestionTypes, listTrophyTypes, upsertQuestionType, upsertTrophyType,
 } from "@/lib/data";
@@ -64,6 +65,7 @@ function QuestionTypesCard({
   const [editOpen, setEditOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<QuestionType | null>(null);
   const [confirmDel, setConfirmDel] = React.useState<QuestionType | null>(null);
+  const cols = useHiddenColumns("tusgu.setup.qt-hidden-columns");
 
   async function save(
     name: string,
@@ -107,9 +109,23 @@ function QuestionTypesCard({
         title="Question Types"
         icon={Calculator}
         actions={
-          <Button size="sm" onClick={() => { setEditing(null); setEditOpen(true); }}>
-            <Plus className="w-4 h-4" /> Add
-          </Button>
+          <>
+            <ColumnsMenu
+              columns={[
+                { key: "name", label: "Name" },
+                { key: "ppq", label: "Points / question" },
+                { key: "default-max", label: "Default max" },
+                { key: "overrides", label: "Per-category overrides" },
+                { key: "actions", label: "Actions" },
+              ]}
+              hidden={cols.hidden}
+              onToggle={cols.toggle}
+              onResetAll={cols.reset}
+            />
+            <Button size="sm" onClick={() => { setEditing(null); setEditOpen(true); }}>
+              <Plus className="w-4 h-4" /> Add
+            </Button>
+          </>
         }
       />
       {questionTypes == null ? (
@@ -125,32 +141,40 @@ function QuestionTypesCard({
           <table className="tusgu-table">
             <thead>
               <tr>
-                <th>Name</th>
-                <th className="text-right">Points / question</th>
-                <th className="text-right">Default max</th>
-                <th>Per-category overrides</th>
-                <th className="w-24">Actions</th>
+                {cols.isVisible("name") && <th>Name</th>}
+                {cols.isVisible("ppq") && <th className="text-right">Points / question</th>}
+                {cols.isVisible("default-max") && <th className="text-right">Default max</th>}
+                {cols.isVisible("overrides") && <th>Per-category overrides</th>}
+                {cols.isVisible("actions") && <th className="w-24">Actions</th>}
               </tr>
             </thead>
             <tbody>
               {questionTypes.map((qt) => (
                 <tr key={qt.id}>
-                  <td className="font-medium">{qt.name}</td>
-                  <td className="text-right tabular-nums">{qt.points_per_question}</td>
-                  <td className="text-right tabular-nums">{qt.max_questions}</td>
-                  <td>
-                    <OverridesPreview value={qt.category_max_overrides} />
-                  </td>
-                  <td>
-                    <div className="flex gap-1">
-                      <Button variant="ghost" size="sm" onClick={() => { setEditing(qt); setEditOpen(true); }}>
-                        <Pencil className="w-3.5 h-3.5" />
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => setConfirmDel(qt)}>
-                        <Trash2 className="w-3.5 h-3.5 text-[#B8341A]" />
-                      </Button>
-                    </div>
-                  </td>
+                  {cols.isVisible("name") && <td className="font-medium">{qt.name}</td>}
+                  {cols.isVisible("ppq") && (
+                    <td className="text-right tabular-nums">{qt.points_per_question}</td>
+                  )}
+                  {cols.isVisible("default-max") && (
+                    <td className="text-right tabular-nums">{qt.max_questions}</td>
+                  )}
+                  {cols.isVisible("overrides") && (
+                    <td>
+                      <OverridesPreview value={qt.category_max_overrides} />
+                    </td>
+                  )}
+                  {cols.isVisible("actions") && (
+                    <td>
+                      <div className="flex gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => { setEditing(qt); setEditOpen(true); }}>
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => setConfirmDel(qt)}>
+                          <Trash2 className="w-3.5 h-3.5 text-[#B8341A]" />
+                        </Button>
+                      </div>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

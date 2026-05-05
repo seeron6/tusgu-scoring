@@ -8,6 +8,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { Card, CardHeader, PageHeader } from "@/components/sidebar";
 import { ProtectedPage } from "@/lib/auth-gate";
+import { ColumnsMenu, useHiddenColumns } from "@/components/columns-menu";
 import {
   listQuestionTypes, listScores, listStudents, listTrophyAllocations, listTrophyTypes,
 } from "@/lib/data";
@@ -41,6 +42,8 @@ function CoachesInner() {
   const [trophyTypes, setTrophyTypes] = React.useState<TrophyType[]>([]);
   const [search, setSearch] = React.useState("");
   const [minPoints, setMinPoints] = React.useState("");
+  // Per-tab column prefs so users can hide e.g. specific trophy columns.
+  const cols = useHiddenColumns(`tusgu.coaches.${tab}.hidden-columns`);
 
   async function load() {
     try {
@@ -164,6 +167,20 @@ function CoachesInner() {
                 </button>
               ))}
             </div>
+            <ColumnsMenu
+              columns={[
+                { key: "rank", label: "Rank" },
+                { key: "subject", label: tab === "teachers" ? "Teacher" : "Centre" },
+                ...(tab === "teachers" ? [{ key: "centres", label: "Centres" }] : []),
+                { key: "students", label: "Students" },
+                ...sortedTrophies.map((t) => ({ key: `trophy-${t.id}`, label: t.name })),
+                { key: "trophies-total", label: "Total trophies" },
+                { key: "points-total", label: "Total points" },
+              ]}
+              hidden={cols.hidden}
+              onToggle={cols.toggle}
+              onResetAll={cols.reset}
+            />
             <Button variant="outline" size="sm" onClick={() => exportData("xlsx")}>
               <FileSpreadsheet className="w-3.5 h-3.5" /> <span className="hidden sm:inline">xlsx</span>
             </Button>
@@ -209,49 +226,63 @@ function CoachesInner() {
             <table className="tusgu-table">
               <thead>
                 <tr>
-                  <th className="w-12">Rank</th>
-                  <th>{tab === "teachers" ? "Teacher (CI)" : "Centre"}</th>
-                  {tab === "teachers" && <th>Centres</th>}
-                  <th className="text-right">Students</th>
-                  {sortedTrophies.map((t) => (
-                    <th key={t.id} className="text-right">
-                      <span className="block text-[10px] text-[#A8A39B] font-normal">{t.points} pts</span>
-                      <span>{t.name.replace("Runner Up", "RU")}</span>
-                    </th>
-                  ))}
-                  <th className="text-right">Total trophies</th>
-                  <th className="text-right">Total points</th>
+                  {cols.isVisible("rank") && <th className="w-12">Rank</th>}
+                  {cols.isVisible("subject") && (
+                    <th>{tab === "teachers" ? "Teacher (CI)" : "Centre"}</th>
+                  )}
+                  {tab === "teachers" && cols.isVisible("centres") && <th>Centres</th>}
+                  {cols.isVisible("students") && <th className="text-right">Students</th>}
+                  {sortedTrophies.map((t) =>
+                    cols.isVisible(`trophy-${t.id}`) ? (
+                      <th key={t.id} className="text-right">
+                        <span className="block text-[10px] text-[#A8A39B] font-normal">{t.points} pts</span>
+                        <span>{t.name.replace("Runner Up", "RU")}</span>
+                      </th>
+                    ) : null
+                  )}
+                  {cols.isVisible("trophies-total") && <th className="text-right">Total trophies</th>}
+                  {cols.isVisible("points-total") && <th className="text-right">Total points</th>}
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((g, i) => (
                   <tr key={g.key}>
-                    <td>
-                      <span className={`inline-flex items-center justify-center min-w-[26px] h-[24px] px-1.5 rounded text-[12px] font-semibold tabular-nums ${
-                        i < 3 ? "bg-[#1B3A6B] text-white" : "text-[#1F1E1B]"
-                      }`}>
-                        {i + 1}
-                      </span>
-                    </td>
-                    <td className="font-medium">{g.key}</td>
-                    {tab === "teachers" && (
+                    {cols.isVisible("rank") && (
+                      <td>
+                        <span className={`inline-flex items-center justify-center min-w-[26px] h-[24px] px-1.5 rounded text-[12px] font-semibold tabular-nums ${
+                          i < 3 ? "bg-[#1B3A6B] text-white" : "text-[#1F1E1B]"
+                        }`}>
+                          {i + 1}
+                        </span>
+                      </td>
+                    )}
+                    {cols.isVisible("subject") && <td className="font-medium">{g.key}</td>}
+                    {tab === "teachers" && cols.isVisible("centres") && (
                       <td className="text-[12px] text-[#7A7770] truncate max-w-xs">
                         {Array.from(g.centres ?? []).slice(0, 3).join(", ")}
                         {(g.centres?.size ?? 0) > 3 ? `, +${(g.centres?.size ?? 0) - 3} more` : ""}
                       </td>
                     )}
-                    <td className="text-right tabular-nums">{g.studentCount}</td>
-                    {sortedTrophies.map((t) => (
-                      <td key={t.id} className="text-right tabular-nums">
-                        {g.trophyCounts[t.id] ? (
-                          <span className="font-medium">{g.trophyCounts[t.id]}</span>
-                        ) : (
-                          <span className="text-[#A8A39B]">—</span>
-                        )}
-                      </td>
-                    ))}
-                    <td className="text-right font-semibold tabular-nums">{g.totalTrophies}</td>
-                    <td className="text-right font-bold tabular-nums text-[#1B3A6B]">{g.totalPoints}</td>
+                    {cols.isVisible("students") && (
+                      <td className="text-right tabular-nums">{g.studentCount}</td>
+                    )}
+                    {sortedTrophies.map((t) =>
+                      cols.isVisible(`trophy-${t.id}`) ? (
+                        <td key={t.id} className="text-right tabular-nums">
+                          {g.trophyCounts[t.id] ? (
+                            <span className="font-medium">{g.trophyCounts[t.id]}</span>
+                          ) : (
+                            <span className="text-[#A8A39B]">—</span>
+                          )}
+                        </td>
+                      ) : null
+                    )}
+                    {cols.isVisible("trophies-total") && (
+                      <td className="text-right font-semibold tabular-nums">{g.totalTrophies}</td>
+                    )}
+                    {cols.isVisible("points-total") && (
+                      <td className="text-right font-bold tabular-nums text-[#1B3A6B]">{g.totalPoints}</td>
+                    )}
                   </tr>
                 ))}
               </tbody>
