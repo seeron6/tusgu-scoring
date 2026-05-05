@@ -14,6 +14,7 @@ import {
   Menu,
   X,
   GraduationCap,
+  Headphones,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { cn } from "@/lib/utils";
@@ -22,6 +23,7 @@ import { useAuth } from "@/lib/auth-gate";
 const NAV = [
   { href: "/students", label: "Students", icon: Users, locked: false },
   { href: "/scores", label: "Scores", icon: ClipboardList, locked: true },
+  { href: "/competitions", label: "Live (L/F)", icon: Headphones, locked: true },
   { href: "/leaderboard", label: "Leaderboard", icon: Trophy, locked: true },
   { href: "/awards", label: "Awards", icon: Award, locked: true },
   { href: "/coaches", label: "Coaches", icon: GraduationCap, locked: true },

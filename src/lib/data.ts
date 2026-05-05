@@ -1,6 +1,7 @@
 "use client";
 import { supabase } from "./supabase";
 import type {
+  Competition,
   QuestionType,
   Score,
   Student,
@@ -320,14 +321,35 @@ export async function listTrophyAllocations(): Promise<TrophyAllocation[]> {
 export async function upsertTrophyAllocation(
   trophyTypeId: number,
   category: string,
-  quantity: number
+  quantity: number,
+  competition: Competition = "visual"
 ): Promise<void> {
   const { error } = await supabase()
     .from("trophy_allocations")
     .upsert(
-      { trophy_type_id: trophyTypeId, category, quantity },
-      { onConflict: "trophy_type_id,category" }
+      { trophy_type_id: trophyTypeId, category, competition, quantity },
+      { onConflict: "trophy_type_id,category,competition" }
     );
+  if (error) throw error;
+}
+
+/**
+ * Live-entry helpers for the Listening / Flash competitions. Position is
+ * 1..N; pass null to clear the rank.
+ */
+export async function setListeningPosition(studentId: number, position: number | null): Promise<void> {
+  const { error } = await supabase()
+    .from("students")
+    .update({ listening_position: position })
+    .eq("id", studentId);
+  if (error) throw error;
+}
+
+export async function setFlashPosition(studentId: number, position: number | null): Promise<void> {
+  const { error } = await supabase()
+    .from("students")
+    .update({ flash_position: position })
+    .eq("id", studentId);
   if (error) throw error;
 }
 

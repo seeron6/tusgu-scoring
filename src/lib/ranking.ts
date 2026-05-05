@@ -1,4 +1,5 @@
 import type {
+  Competition,
   LeaderboardRow,
   QuestionType,
   Score,
@@ -126,12 +127,13 @@ function assignTrophies(
   pointsByQt: Record<number, number>
 ): Map<number, TrophyType> {
   const ordered = [...trophyTypes].sort((a, b) => a.display_order - b.display_order);
+  const visualAllocs = allocations.filter((a) => (a.competition ?? "visual") === "visual");
   const out = new Map<number, TrophyType>();
   for (const [category, list] of grouped.entries()) {
     const sorted = sortByCanonicalRank(list, scoresByStudent, pointsByQt);
     const queue = [...sorted];
     for (const tt of ordered) {
-      const alloc = allocations.find(
+      const alloc = visualAllocs.find(
         (a) => a.category === category && a.trophy_type_id === tt.id
       );
       const qty = alloc?.quantity ?? 0;
@@ -142,6 +144,171 @@ function assignTrophies(
     }
   }
   return out;
+}
+
+// =============================================================
+// Listening / Flash position-based leaderboard
+// =============================================================
+
+export type PositionLeaderboardRow = {
+  category: string;
+  position: number;            // 1-based rank entered by the user
+  student: Student;
+  trophy: TrophyType | null;
+};
+
+export type PositionInputs = {
+  students: Student[];
+  trophyTypes: TrophyType[];
+  trophyAllocations: TrophyAllocation[];
+  competition: Extract<Competition, "listening" | "flash">;
+};
+
+/**
+ * Build a leaderboard for the Listening / Flash competitions. These are
+ * live-entered, so the rank is the user-supplied position field on each
+ * student (`listening_position` or `flash_position`).
+ *
+ * Trophy rules: per category, allocations describe how many trophies of
+ * each type to hand out. Trophies are awarded in trophy display_order to
+ * students sorted by ascending position (1 first, then 2, …). Ties / nulls
+ * are handled by sorting nulls last.
+ */
+export function buildPositionLeaderboard({
+  students,
+  trophyTypes,
+  trophyAllocations,
+  competition,
+}: PositionInputs): PositionLeaderboardRow[] {
+  const isListening = competition === "listening";
+  const allocs = trophyAllocations.filter((a) => a.competition === competition);
+  const orderedTrophies = [...trophyTypes].sort((a, b) => a.display_order - b.display_order);
+
+  // Group eligible students by their competition's category
+  const grouped = new Map<string, Student[]>();
+  for (const s of students) {
+    const cat = (isListening ? s.listening_category : s.flash_category) ?? null;
+    if (!cat) continue;
+    if (!grouped.has(cat)) grouped.set(cat, []);
+    grouped.get(cat)!.push(s);
+  }
+
+  const rows: PositionLeaderboardRow[] = [];
+  for (const [category, list] of grouped.entries()) {
+    // Only ranked students factor into the trophy queue.
+    const ranked = list
+      .filter((s) => {
+        const p = isListening ? s.listening_position : s.flash_position;
+        return typeof p === "number" && p > 0;
+      })
+      .sort((a, b) => {
+        const pa = (isListening ? a.listening_position : a.flash_position) ?? Infinity;
+        const pb = (isListening ? b.listening_position : b.flash_position) ?? Infinity;
+        if (pa !== pb) return pa - pb;
+        return (a.full_name || "").localeCompare(b.full_name || "");
+      });
+
+    // Walk the trophy types in display_order, popping from the front of the
+    // ranked queue to hand out each trophy.
+    const queue = [...ranked];
+    const assignments = new Map<number, TrophyType>();
+    for (const tt of orderedTrophies) {
+      const alloc = allocs.find(
+        (a) => a.category === category && a.trophy_type_id === tt.id
+      );
+      const qty = alloc?.quantity ?? 0;
+      for (let i = 0; i < qty && queue.length > 0; i++) {
+        const winner = queue.shift()!;
+        if (!assignments.has(winner.id)) assignments.set(winner.id, tt);
+      }
+    }
+
+    for (const s of ranked) {
+      const position = (isListening ? s.listening_position : s.flash_position) ?? 0;
+      rows.push({
+        category,
+        position,
+        student: s,
+        trophy: assignments.get(s.id) ?? null,
+      });
+    }
+  }
+  return rows;
+}
+
+/**
+ * Roll up trophy counts and points across all three competitions, keyed by
+ * teacher (or centre) name. Used by the Coaches leaderboard so a coach's
+ * Visual + Listening + Flash trophies all contribute.
+ */
+export type CoachRollup = {
+  key: string;
+  centres?: Set<string>;
+  studentCount: number;
+  totalTrophies: number;
+  totalPoints: number;
+  trophyCounts: Record<number, number>;        // trophy_type_id -> count
+  byCompetition: Record<Competition, { trophies: number; points: number }>;
+};
+
+export function rollupCoachTrophies(
+  visualRows: LeaderboardRow[],
+  listeningRows: PositionLeaderboardRow[],
+  flashRows: PositionLeaderboardRow[],
+  mode: "teachers" | "centres",
+  allStudents: Student[]
+): CoachRollup[] {
+  const map = new Map<string, CoachRollup>();
+
+  function ensure(key: string, student: Student): CoachRollup {
+    let g = map.get(key);
+    if (!g) {
+      g = {
+        key,
+        centres: mode === "teachers" ? new Set<string>() : undefined,
+        studentCount: 0,
+        totalTrophies: 0,
+        totalPoints: 0,
+        trophyCounts: {},
+        byCompetition: {
+          visual:    { trophies: 0, points: 0 },
+          listening: { trophies: 0, points: 0 },
+          flash:     { trophies: 0, points: 0 },
+        },
+      };
+      map.set(key, g);
+    }
+    if (mode === "teachers" && student.centre) g.centres?.add(student.centre);
+    return g;
+  }
+
+  // First add ALL students so the coach shows even if their kids didn't win.
+  const seenKeyForStudent = new Set<string>();
+  for (const s of allStudents) {
+    const key = (mode === "teachers" ? s.teacher : s.centre) ?? "(unknown)";
+    const g = ensure(key, s);
+    const stKey = `${key}::${s.id}`;
+    if (!seenKeyForStudent.has(stKey)) {
+      seenKeyForStudent.add(stKey);
+      g.studentCount += 1;
+    }
+  }
+
+  function addTrophy(student: Student, trophy: TrophyType, comp: Competition) {
+    const key = (mode === "teachers" ? student.teacher : student.centre) ?? "(unknown)";
+    const g = ensure(key, student);
+    g.trophyCounts[trophy.id] = (g.trophyCounts[trophy.id] ?? 0) + 1;
+    g.totalTrophies += 1;
+    g.totalPoints += trophy.points ?? 0;
+    g.byCompetition[comp].trophies += 1;
+    g.byCompetition[comp].points += trophy.points ?? 0;
+  }
+
+  for (const r of visualRows) if (r.trophy) addTrophy(r.student, r.trophy, "visual");
+  for (const r of listeningRows) if (r.trophy) addTrophy(r.student, r.trophy, "listening");
+  for (const r of flashRows) if (r.trophy) addTrophy(r.student, r.trophy, "flash");
+
+  return Array.from(map.values()).sort((a, b) => b.totalPoints - a.totalPoints);
 }
 
 export function groupByTrophyAlphabetical(rows: LeaderboardRow[]): {

@@ -13,7 +13,7 @@ import { formatDate } from "@/lib/utils";
 import {
   listQuestionTypes, listScores, listStudents, listTrophyAllocations, listTrophyTypes,
 } from "@/lib/data";
-import { buildLeaderboard } from "@/lib/ranking";
+import { buildLeaderboard, buildPositionLeaderboard, type PositionLeaderboardRow } from "@/lib/ranking";
 import type { Score, Student, TrophyAllocation, TrophyType } from "@/lib/types";
 import {
   downloadText, downloadWorkbook, leaderboardToCsv, leaderboardToWorkbook,
@@ -30,8 +30,13 @@ export default function LeaderboardPage() {
   );
 }
 
+type LBTab = "visual" | "listening" | "flash";
+
 function LeaderboardInner() {
+  const [tab, setTab] = React.useState<LBTab>("visual");
   const [rows, setRows] = React.useState<LeaderboardRow[] | null>(null);
+  const [listeningRows, setListeningRows] = React.useState<PositionLeaderboardRow[]>([]);
+  const [flashRows, setFlashRows] = React.useState<PositionLeaderboardRow[]>([]);
   const [questionTypes, setQuestionTypes] = React.useState<QuestionType[]>([]);
   const [trophiesApplied, setTrophiesApplied] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
@@ -62,15 +67,21 @@ function LeaderboardInner() {
         listTrophyAllocations(),
       ]);
       sourceRef.current = { students, scores, questionTypes: qts, trophyTypes, trophyAllocations };
-      const built = buildLeaderboard({
-        students,
-        scores,
-        questionTypes: qts,
-        trophyTypes,
-        trophyAllocations,
-        applyTrophies,
-      });
-      setRows(built);
+      setRows(
+        buildLeaderboard({
+          students, scores, questionTypes: qts, trophyTypes, trophyAllocations, applyTrophies,
+        })
+      );
+      setListeningRows(
+        buildPositionLeaderboard({
+          students, trophyTypes, trophyAllocations, competition: "listening",
+        })
+      );
+      setFlashRows(
+        buildPositionLeaderboard({
+          students, trophyTypes, trophyAllocations, competition: "flash",
+        })
+      );
       setQuestionTypes(qts);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to load leaderboard");
@@ -166,10 +177,23 @@ function LeaderboardInner() {
     <div>
       <PageHeader
         title="Leaderboard"
-        description="Rankings group by category, ordered by score, then DOB (younger wins ties), then alphabetical."
+        description="Rankings group by category. Visual ranks by score; Listening and Flash rank by the live position you entered."
         actions={
           <>
-            <ColumnsMenu
+            <div className="flex items-center bg-white border border-[#E8E3D7] rounded-md p-0.5">
+              {(["visual", "listening", "flash"] as LBTab[]).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setTab(t)}
+                  className={`px-3 py-1.5 text-[12px] font-medium rounded transition-colors capitalize ${
+                    tab === t ? "bg-[#1B3A6B] text-white" : "text-[#4A4843] hover:bg-[#F5F2EB]"
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+            {tab === "visual" && <ColumnsMenu
               columns={[
                 { key: "rank", label: "Rank" },
                 { key: "name", label: "Name" },
@@ -185,7 +209,7 @@ function LeaderboardInner() {
               hidden={cols.hidden}
               onToggle={cols.toggle}
               onResetAll={cols.reset}
-            />
+            />}
             <Button variant="outline" onClick={() => setExportOpen(true)}>
               <Download className="w-4 h-4" />
               <span className="hidden sm:inline">Export</span>
@@ -256,27 +280,42 @@ function LeaderboardInner() {
         </div>
       </div>
 
-      {rows == null || loading ? (
-        <div className="bg-white rounded-xl border border-[#E8E3D7]">
-          <TableSkeleton rows={8} cols={8} />
-        </div>
-      ) : grouped.length === 0 ? (
-        <div className="bg-white rounded-xl border border-[#E8E3D7]">
-          <EmptyState icon={Trophy} title="No results" description="Add students and scores, or adjust filters." />
-        </div>
-      ) : (
-        <div className="space-y-6">
-          {grouped.map(([cat, list]) => (
-            <CategorySection
-              key={cat}
-              category={cat}
-              rows={list}
-              questionTypes={questionTypes}
-              showTrophy={trophiesApplied}
-              isVisible={cols.isVisible}
-            />
-          ))}
-        </div>
+      {tab === "visual" && (
+        rows == null || loading ? (
+          <div className="bg-white rounded-xl border border-[#E8E3D7]">
+            <TableSkeleton rows={8} cols={8} />
+          </div>
+        ) : grouped.length === 0 ? (
+          <div className="bg-white rounded-xl border border-[#E8E3D7]">
+            <EmptyState icon={Trophy} title="No results" description="Add students and scores, or adjust filters." />
+          </div>
+        ) : (
+          <div className="space-y-6">
+            {grouped.map(([cat, list]) => (
+              <CategorySection
+                key={cat}
+                category={cat}
+                rows={list}
+                questionTypes={questionTypes}
+                showTrophy={trophiesApplied}
+                isVisible={cols.isVisible}
+              />
+            ))}
+          </div>
+        )
+      )}
+
+      {tab === "listening" && (
+        <PositionLeaderboardView
+          competitionLabel="Listening"
+          rows={listeningRows}
+        />
+      )}
+      {tab === "flash" && (
+        <PositionLeaderboardView
+          competitionLabel="Flash"
+          rows={flashRows}
+        />
       )}
 
       <ExportModal
@@ -395,6 +434,95 @@ function CategorySection({
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function PositionLeaderboardView({
+  competitionLabel, rows,
+}: {
+  competitionLabel: string;
+  rows: PositionLeaderboardRow[];
+}) {
+  const grouped = React.useMemo(() => {
+    const m = new Map<string, PositionLeaderboardRow[]>();
+    for (const r of rows) {
+      if (!m.has(r.category)) m.set(r.category, []);
+      m.get(r.category)!.push(r);
+    }
+    for (const v of m.values()) v.sort((a, b) => a.position - b.position);
+    return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [rows]);
+
+  if (grouped.length === 0) {
+    return (
+      <div className="bg-white rounded-xl border border-[#E8E3D7]">
+        <EmptyState
+          icon={Trophy}
+          title={`No ${competitionLabel} entries yet`}
+          description="Use the Live (L/F) page to enter positions for ranked students."
+        />
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-6">
+      {grouped.map(([cat, list]) => (
+        <div
+          key={cat}
+          data-export-section
+          data-export-name={`${competitionLabel}-${cat}`}
+          className="bg-white rounded-xl border border-[#E8E3D7] shadow-sm overflow-hidden"
+        >
+          <div className="px-5 sm:px-6 py-4 border-b border-[#F0EDE5] flex flex-col sm:flex-row sm:items-baseline justify-between gap-2">
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-[#7A7770] mb-1">
+                {competitionLabel}
+              </div>
+              <h2 className="font-serif text-lg sm:text-[20px] font-semibold text-[#1F1E1B] tracking-tight">
+                {cat}
+              </h2>
+            </div>
+            <div className="text-[12px] text-[#4A4843]">
+              {list.length} ranked
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="tusgu-table">
+              <thead>
+                <tr>
+                  <th className="w-16">Position</th>
+                  <th>Name</th>
+                  <th>Trophy</th>
+                  <th>Centre</th>
+                  <th>Teacher</th>
+                </tr>
+              </thead>
+              <tbody>
+                {list.map((r) => (
+                  <tr key={r.student.id}>
+                    <td><RankBadge rank={r.position} /></td>
+                    <td className="font-medium">{r.student.full_name}</td>
+                    <td>
+                      {r.trophy ? (
+                        <TrophyChip
+                          name={r.trophy.name}
+                          icon={r.trophy.icon}
+                          order={r.trophy.display_order}
+                        />
+                      ) : (
+                        <span className="text-[#A8A39B]">—</span>
+                      )}
+                    </td>
+                    <td className="text-[#4A4843]">{r.student.centre ?? ""}</td>
+                    <td className="text-[#4A4843]">{r.student.teacher ?? ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

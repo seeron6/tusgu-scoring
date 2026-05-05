@@ -145,7 +145,9 @@ export default function StudentsPage() {
         const inserted = await upsertStudent({
           student_code: null, exam_code: null, barcode: null, full_name: "",
           dob: null, gender: null, category: null, level: null, listening_category: null,
-          listening_code: null, centre: null, teacher: null, ci_code: null,
+          listening_code: null, listening_position: null,
+          flash_category: null, flash_position: null,
+          centre: null, teacher: null, ci_code: null, franchisee_category: null,
           tshirt_size: null, email: null, phone: null, report_time: null,
           comp_time: null, deduction: null, notes: null, extra: {},
           ...payload,

@@ -12,21 +12,14 @@ import { ColumnsMenu, useHiddenColumns } from "@/components/columns-menu";
 import {
   listQuestionTypes, listScores, listStudents, listTrophyAllocations, listTrophyTypes,
 } from "@/lib/data";
-import { buildLeaderboard } from "@/lib/ranking";
+import {
+  buildLeaderboard, buildPositionLeaderboard, rollupCoachTrophies, type CoachRollup,
+} from "@/lib/ranking";
 import { downloadText, downloadWorkbook } from "@/lib/excel";
 import * as XLSX from "xlsx";
-import type { LeaderboardRow, TrophyType } from "@/lib/types";
+import type { Competition, Student, TrophyType } from "@/lib/types";
 
 type Tab = "teachers" | "centres";
-
-type GroupRow = {
-  key: string;        // teacher / centre name
-  centres?: Set<string>; // teacher tab only
-  totalPoints: number;
-  studentCount: number;
-  trophyCounts: Record<number, number>; // trophy_type_id -> count
-  totalTrophies: number;
-};
 
 export default function CoachesPage() {
   return (
@@ -38,10 +31,13 @@ export default function CoachesPage() {
 
 function CoachesInner() {
   const [tab, setTab] = React.useState<Tab>("teachers");
-  const [rows, setRows] = React.useState<LeaderboardRow[] | null>(null);
+  const [grouped, setGrouped] = React.useState<CoachRollup[] | null>(null);
   const [trophyTypes, setTrophyTypes] = React.useState<TrophyType[]>([]);
   const [search, setSearch] = React.useState("");
   const [minPoints, setMinPoints] = React.useState("");
+  const [franchiseeFilter, setFranchiseeFilter] = React.useState<string>("");
+  const [allFranchiseeCategories, setAllFranchiseeCategories] = React.useState<string[]>([]);
+  const [studentsByKey, setStudentsByKey] = React.useState<Map<string, Student[]>>(new Map());
   // Per-tab column prefs so users can hide e.g. specific trophy columns.
   const cols = useHiddenColumns(`tusgu.coaches.${tab}.hidden-columns`);
 
@@ -55,59 +51,65 @@ function CoachesInner() {
         listTrophyAllocations(),
       ]);
       setTrophyTypes(types);
-      setRows(
-        buildLeaderboard({
-          students,
-          scores,
-          questionTypes: qts,
-          trophyTypes: types,
-          trophyAllocations: allocs,
-          applyTrophies: true,
-        })
-      );
+
+      // Build trophy assignments for all three competitions, then roll them
+      // up by teacher (or centre).
+      const visualRows = buildLeaderboard({
+        students, scores, questionTypes: qts, trophyTypes: types,
+        trophyAllocations: allocs, applyTrophies: true,
+      });
+      const listeningRows = buildPositionLeaderboard({
+        students, trophyTypes: types, trophyAllocations: allocs, competition: "listening",
+      });
+      const flashRows = buildPositionLeaderboard({
+        students, trophyTypes: types, trophyAllocations: allocs, competition: "flash",
+      });
+      setGrouped(rollupCoachTrophies(visualRows, listeningRows, flashRows, tab, students));
+
+      const byKey = new Map<string, Student[]>();
+      for (const s of students) {
+        const key = (tab === "teachers" ? s.teacher : s.centre) ?? "(unknown)";
+        if (!byKey.has(key)) byKey.set(key, []);
+        byKey.get(key)!.push(s);
+      }
+      setStudentsByKey(byKey);
+
+      const fc = new Set<string>();
+      for (const s of students) if (s.franchisee_category) fc.add(s.franchisee_category);
+      setAllFranchiseeCategories(Array.from(fc).sort());
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to load coaches data");
     }
   }
-  React.useEffect(() => { load(); }, []);
+  React.useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tab]);
 
-  const grouped = React.useMemo(() => {
-    if (!rows) return [];
-    const map = new Map<string, GroupRow>();
-    for (const r of rows) {
-      const key = (tab === "teachers" ? r.student.teacher : r.student.centre) ?? "(unknown)";
-      let g = map.get(key);
-      if (!g) {
-        g = {
-          key,
-          centres: tab === "teachers" ? new Set() : undefined,
-          totalPoints: 0,
-          studentCount: 0,
-          trophyCounts: {},
-          totalTrophies: 0,
-        };
-        map.set(key, g);
-      }
-      g.studentCount += 1;
-      if (tab === "teachers" && r.student.centre) g.centres?.add(r.student.centre);
-      if (r.trophy) {
-        g.trophyCounts[r.trophy.id] = (g.trophyCounts[r.trophy.id] ?? 0) + 1;
-        g.totalTrophies += 1;
-        g.totalPoints += r.trophy.points ?? 0;
-      }
+  function franchiseeForKey(key: string): string {
+    const list = studentsByKey.get(key) ?? [];
+    // Most common franchisee_category among students of this teacher/centre.
+    const counts = new Map<string, number>();
+    for (const s of list) {
+      if (!s.franchisee_category) continue;
+      counts.set(s.franchisee_category, (counts.get(s.franchisee_category) ?? 0) + 1);
     }
-    return Array.from(map.values()).sort((a, b) => b.totalPoints - a.totalPoints);
-  }, [rows, tab]);
+    let best: { c: string; n: number } | null = null;
+    for (const [c, n] of counts.entries()) {
+      if (!best || n > best.n) best = { c, n };
+    }
+    return best?.c ?? "";
+  }
 
   const filtered = React.useMemo(() => {
+    if (!grouped) return [];
     const q = search.trim().toLowerCase();
     const min = parseFloat(minPoints);
     return grouped.filter((g) => {
       if (q && !g.key.toLowerCase().includes(q)) return false;
       if (Number.isFinite(min) && g.totalPoints < min) return false;
+      if (franchiseeFilter && franchiseeForKey(g.key) !== franchiseeFilter) return false;
       return true;
     });
-  }, [grouped, search, minPoints]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grouped, search, minPoints, franchiseeFilter, studentsByKey]);
 
   const sortedTrophies = [...trophyTypes].sort((a, b) => a.display_order - b.display_order);
 
@@ -117,18 +119,30 @@ function CoachesInner() {
       return;
     }
     const stamp = new Date().toISOString().slice(0, 10);
-    const headers = [tab === "teachers" ? "Teacher (CI)" : "Centre"];
+    const headers = [tab === "teachers" ? "Teacher (CI)" : "Centre", "Franchisee Category"];
     if (tab === "teachers") headers.push("Centres", "Students");
     else headers.push("Students");
     for (const t of sortedTrophies) headers.push(t.name);
-    headers.push("Total trophies", "Total points");
+    headers.push(
+      "Total trophies",
+      "Total points",
+      "Visual points",
+      "Listening points",
+      "Flash points"
+    );
 
     const data = filtered.map((g) => {
-      const arr: (string | number)[] = [g.key];
+      const arr: (string | number)[] = [g.key, franchiseeForKey(g.key)];
       if (tab === "teachers") arr.push(Array.from(g.centres ?? []).join(", "));
       arr.push(g.studentCount);
       for (const t of sortedTrophies) arr.push(g.trophyCounts[t.id] ?? 0);
-      arr.push(g.totalTrophies, g.totalPoints);
+      arr.push(
+        g.totalTrophies,
+        g.totalPoints,
+        g.byCompetition.visual.points,
+        g.byCompetition.listening.points,
+        g.byCompetition.flash.points
+      );
       return arr;
     });
 
@@ -171,11 +185,15 @@ function CoachesInner() {
               columns={[
                 { key: "rank", label: "Rank" },
                 { key: "subject", label: tab === "teachers" ? "Teacher" : "Centre" },
+                { key: "franchisee", label: "Franchisee Category" },
                 ...(tab === "teachers" ? [{ key: "centres", label: "Centres" }] : []),
                 { key: "students", label: "Students" },
                 ...sortedTrophies.map((t) => ({ key: `trophy-${t.id}`, label: t.name })),
                 { key: "trophies-total", label: "Total trophies" },
                 { key: "points-total", label: "Total points" },
+                { key: "points-visual", label: "Visual points" },
+                { key: "points-listening", label: "Listening points" },
+                { key: "points-flash", label: "Flash points" },
               ]}
               hidden={cols.hidden}
               onToggle={cols.toggle}
@@ -196,7 +214,19 @@ function CoachesInner() {
           title={tab === "teachers" ? "Teacher leaderboard" : "Centre leaderboard"}
           icon={tab === "teachers" ? GraduationCap : Building2}
           actions={
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              {allFranchiseeCategories.length > 0 && (
+                <Select
+                  value={franchiseeFilter}
+                  onChange={(e) => setFranchiseeFilter(e.target.value)}
+                  className="h-8 w-44"
+                >
+                  <option value="">All franchisee cats</option>
+                  {allFranchiseeCategories.map((c) => (
+                    <option key={c} value={c}>{c}</option>
+                  ))}
+                </Select>
+              )}
               <Input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
@@ -213,7 +243,7 @@ function CoachesInner() {
             </div>
           }
         />
-        {rows == null ? (
+        {grouped == null ? (
           <TableSkeleton rows={8} cols={6} />
         ) : filtered.length === 0 ? (
           <EmptyState
@@ -230,6 +260,7 @@ function CoachesInner() {
                   {cols.isVisible("subject") && (
                     <th>{tab === "teachers" ? "Teacher (CI)" : "Centre"}</th>
                   )}
+                  {cols.isVisible("franchisee") && <th>Franchisee Category</th>}
                   {tab === "teachers" && cols.isVisible("centres") && <th>Centres</th>}
                   {cols.isVisible("students") && <th className="text-right">Students</th>}
                   {sortedTrophies.map((t) =>
@@ -242,6 +273,9 @@ function CoachesInner() {
                   )}
                   {cols.isVisible("trophies-total") && <th className="text-right">Total trophies</th>}
                   {cols.isVisible("points-total") && <th className="text-right">Total points</th>}
+                  {cols.isVisible("points-visual") && <th className="text-right">Visual</th>}
+                  {cols.isVisible("points-listening") && <th className="text-right">Listening</th>}
+                  {cols.isVisible("points-flash") && <th className="text-right">Flash</th>}
                 </tr>
               </thead>
               <tbody>
@@ -257,6 +291,11 @@ function CoachesInner() {
                       </td>
                     )}
                     {cols.isVisible("subject") && <td className="font-medium">{g.key}</td>}
+                    {cols.isVisible("franchisee") && (
+                      <td className="text-[12px] text-[#4A4843]">
+                        {franchiseeForKey(g.key) || <span className="text-[#A8A39B]">—</span>}
+                      </td>
+                    )}
                     {tab === "teachers" && cols.isVisible("centres") && (
                       <td className="text-[12px] text-[#7A7770] truncate max-w-xs">
                         {Array.from(g.centres ?? []).slice(0, 3).join(", ")}
@@ -282,6 +321,21 @@ function CoachesInner() {
                     )}
                     {cols.isVisible("points-total") && (
                       <td className="text-right font-bold tabular-nums text-[#1B3A6B]">{g.totalPoints}</td>
+                    )}
+                    {cols.isVisible("points-visual") && (
+                      <td className="text-right tabular-nums">
+                        {g.byCompetition.visual.points || <span className="text-[#A8A39B]">—</span>}
+                      </td>
+                    )}
+                    {cols.isVisible("points-listening") && (
+                      <td className="text-right tabular-nums">
+                        {g.byCompetition.listening.points || <span className="text-[#A8A39B]">—</span>}
+                      </td>
+                    )}
+                    {cols.isVisible("points-flash") && (
+                      <td className="text-right tabular-nums">
+                        {g.byCompetition.flash.points || <span className="text-[#A8A39B]">—</span>}
+                      </td>
                     )}
                   </tr>
                 ))}

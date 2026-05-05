@@ -35,6 +35,13 @@ create table if not exists public.students (
   full_name           text not null,
   dob                 date,
   gender              text,
+  -- Categories per competition. `category` is the Visual / score-based
+  -- category. listening_category and flash_category power their own
+  -- separate live competitions.
+  flash_category      text,
+  listening_position  integer,
+  flash_position      integer,
+  franchisee_category text,            -- e.g. "Emerging", "Mid Career"
   -- Categorization
   category            text,           -- "A1", "B2", "Z3"… freeform; ranking groups by this
   level               text,           -- "Basic", "Elementary A", etc
@@ -88,9 +95,10 @@ create table if not exists public.trophy_types (
 create table if not exists public.trophy_allocations (
   id              bigserial primary key,
   trophy_type_id  bigint not null references public.trophy_types(id) on delete cascade,
-  category        text not null,           -- matches students.category
+  category        text not null,           -- matches students.category / listening_category / flash_category
+  competition     text not null default 'visual',  -- 'visual' | 'listening' | 'flash'
   quantity        integer not null default 0,
-  unique (trophy_type_id, category)
+  unique (trophy_type_id, category, competition)
 );
 
 -- =============================================================

@@ -18,8 +18,9 @@ import {
 } from "@/lib/data";
 import { buildLeaderboard } from "@/lib/ranking";
 import type {
-  LeaderboardRow, QuestionType, Student, TrophyAllocation, TrophyType,
+  Competition, LeaderboardRow, QuestionType, Student, TrophyAllocation, TrophyType,
 } from "@/lib/types";
+import { COMPETITION_LABELS, COMPETITIONS } from "@/lib/types";
 
 type Tab = "preview" | "configure";
 
@@ -33,6 +34,7 @@ export default function AwardsPage() {
 
 function AwardsInner() {
   const [tab, setTab] = React.useState<Tab>("preview");
+  const [competition, setCompetition] = React.useState<Competition>("visual");
   const [trophies, setTrophies] = React.useState<TrophyType[] | null>(null);
   const [allocations, setAllocations] = React.useState<TrophyAllocation[]>([]);
   const [students, setStudents] = React.useState<Student[]>([]);
@@ -70,10 +72,19 @@ function AwardsInner() {
     load();
   }, []);
 
-  const categories = React.useMemo(
-    () => Array.from(new Set(students.map((s) => s.category ?? "(uncategorised)"))).sort(),
-    [students]
-  );
+  // Categories per competition. Visual uses students.category; Listening
+  // and Flash use their own categorical fields entered on import.
+  const categories = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const s of students) {
+      const cat =
+        competition === "visual" ? s.category :
+        competition === "listening" ? s.listening_category :
+        s.flash_category;
+      if (cat) set.add(cat);
+    }
+    return Array.from(set).sort();
+  }, [students, competition]);
 
   return (
     <div>
@@ -107,13 +118,31 @@ function AwardsInner() {
       ) : (
         <div className="space-y-4">
           <div className="bg-[#F4F1E8] border border-[#E5DECF] rounded-lg p-3 text-[12px] text-[#4A4843] leading-relaxed">
-            Trophy types and point values live on the <strong>Setup</strong> page now. Use this card to set quantities (or percentages) per category.
+            Trophy types and point values live on the <strong>Setup</strong> page. Use this card
+            to set quantities (or percentages) per category, separately for each competition.
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] uppercase tracking-wider text-[#7A7770]">Competition</span>
+            <div className="flex items-center bg-white border border-[#E8E3D7] rounded-md p-0.5">
+              {COMPETITIONS.map((c) => (
+                <button
+                  key={c}
+                  onClick={() => setCompetition(c)}
+                  className={`px-3 py-1.5 text-[12px] font-medium rounded transition-colors ${
+                    competition === c ? "bg-[#1B3A6B] text-white" : "text-[#4A4843] hover:bg-[#F5F2EB]"
+                  }`}
+                >
+                  {COMPETITION_LABELS[c]}
+                </button>
+              ))}
+            </div>
           </div>
           <AllocationsCard
             trophies={trophies ?? []}
             categories={categories}
             allocations={allocations}
             students={students}
+            competition={competition}
             reload={load}
           />
         </div>
@@ -267,12 +296,13 @@ function TrophyBand({ trophy, rows }: { trophy: TrophyType; rows: LeaderboardRow
 }
 
 function AllocationsCard({
-  trophies, categories, allocations, students, reload,
+  trophies, categories, allocations, students, competition, reload,
 }: {
   trophies: TrophyType[];
   categories: string[];
   allocations: TrophyAllocation[];
   students: Student[];
+  competition: Competition;
   reload: () => void;
 }) {
   const [activeCat, setActiveCat] = React.useState<string | null>(null);
@@ -293,12 +323,22 @@ function AllocationsCard({
 
   React.useEffect(() => {
     const q: Record<string, string> = {};
-    for (const a of allocations) q[`${a.category}-${a.trophy_type_id}`] = String(a.quantity);
+    for (const a of allocations) {
+      if (a.competition !== competition) continue;
+      q[`${a.category}-${a.trophy_type_id}`] = String(a.quantity);
+    }
     setQtyDraft(q);
-  }, [allocations]);
+    setPctDraft({});
+  }, [allocations, competition]);
 
   function categoryStudentCount(cat: string): number {
-    return students.filter((s) => (s.category ?? "(uncategorised)") === cat).length;
+    return students.filter((s) => {
+      const c =
+        competition === "visual" ? s.category :
+        competition === "listening" ? s.listening_category :
+        s.flash_category;
+      return c === cat;
+    }).length;
   }
 
   function pctToQty(cat: string, pct: number): number {
@@ -346,10 +386,10 @@ function AllocationsCard({
     try {
       for (const c of categories) {
         for (const t of trophies) {
-          await upsertTrophyAllocation(t.id, c, effectiveQty(c, t.id));
+          await upsertTrophyAllocation(t.id, c, effectiveQty(c, t.id), competition);
         }
       }
-      toast.success("Allocations saved");
+      toast.success(`${COMPETITION_LABELS[competition]} allocations saved`);
       reload();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Save failed");
