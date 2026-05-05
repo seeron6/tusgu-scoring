@@ -334,8 +334,8 @@ export async function upsertTrophyAllocation(
 }
 
 /**
- * Live-entry helpers for the Listening / Flash competitions. Position is
- * 1..N; pass null to clear the rank.
+ * Live-entry helpers. Position is 1..N (legacy / optional ordering).
+ * Pass null to clear.
  */
 export async function setListeningPosition(studentId: number, position: number | null): Promise<void> {
   const { error } = await supabase()
@@ -349,6 +349,26 @@ export async function setFlashPosition(studentId: number, position: number | nul
   const { error } = await supabase()
     .from("students")
     .update({ flash_position: position })
+    .eq("id", studentId);
+  if (error) throw error;
+}
+
+/**
+ * Direct trophy assignment for the live (Listening / Flash) competitions.
+ * Pass null to clear.
+ */
+export async function setListeningTrophy(studentId: number, trophyTypeId: number | null): Promise<void> {
+  const { error } = await supabase()
+    .from("students")
+    .update({ listening_trophy_id: trophyTypeId })
+    .eq("id", studentId);
+  if (error) throw error;
+}
+
+export async function setFlashTrophy(studentId: number, trophyTypeId: number | null): Promise<void> {
+  const { error } = await supabase()
+    .from("students")
+    .update({ flash_trophy_id: trophyTypeId })
     .eq("id", studentId);
   if (error) throw error;
 }

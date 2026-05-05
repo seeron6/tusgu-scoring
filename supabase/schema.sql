@@ -39,9 +39,15 @@ create table if not exists public.students (
   -- category. listening_category and flash_category power their own
   -- separate live competitions.
   flash_category      text,
+  -- Live competitions used to store a numeric position; now we store a
+  -- direct trophy assignment per competition (FK to trophy_types). The
+  -- position columns are kept for backwards compat / sorting.
   listening_position  integer,
   flash_position      integer,
-  franchisee_category text,            -- e.g. "Emerging", "Mid Career"
+  listening_trophy_id bigint,           -- references trophy_types(id)
+  flash_trophy_id     bigint,           -- references trophy_types(id)
+  ci_category         text,             -- per teacher: e.g. "Mid Career"
+  franchisee_category text,             -- per centre: e.g. "Emerging"
   -- Categorization
   category            text,           -- "A1", "B2", "Z3"… freeform; ranking groups by this
   level               text,           -- "Basic", "Elementary A", etc

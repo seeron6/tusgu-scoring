@@ -35,9 +35,13 @@ function CoachesInner() {
   const [trophyTypes, setTrophyTypes] = React.useState<TrophyType[]>([]);
   const [search, setSearch] = React.useState("");
   const [minPoints, setMinPoints] = React.useState("");
-  const [franchiseeFilter, setFranchiseeFilter] = React.useState<string>("");
-  const [allFranchiseeCategories, setAllFranchiseeCategories] = React.useState<string[]>([]);
+  const [tierFilter, setTierFilter] = React.useState<string>("");
+  const [allTiers, setAllTiers] = React.useState<string[]>([]);
   const [studentsByKey, setStudentsByKey] = React.useState<Map<string, Student[]>>(new Map());
+
+  // Teachers tab uses ci_category; Centres tab uses franchisee_category.
+  const tierField: keyof Student = tab === "teachers" ? "ci_category" : "franchisee_category";
+  const tierLabel = tab === "teachers" ? "CI Category" : "Franchisee Category";
   // Per-tab column prefs so users can hide e.g. specific trophy columns.
   const cols = useHiddenColumns(`tusgu.coaches.${tab}.hidden-columns`);
 
@@ -75,21 +79,29 @@ function CoachesInner() {
       setStudentsByKey(byKey);
 
       const fc = new Set<string>();
-      for (const s of students) if (s.franchisee_category) fc.add(s.franchisee_category);
-      setAllFranchiseeCategories(Array.from(fc).sort());
+      for (const s of students) {
+        const v = s[tierField] as string | null;
+        if (v) fc.add(v);
+      }
+      setAllTiers(Array.from(fc).sort());
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to load coaches data");
     }
   }
-  React.useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tab]);
+  React.useEffect(() => {
+    load();
+    setTierFilter("");
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [tab]);
 
-  function franchiseeForKey(key: string): string {
+  /** Most-common tier value among the students of this teacher / centre. */
+  function tierForKey(key: string): string {
     const list = studentsByKey.get(key) ?? [];
-    // Most common franchisee_category among students of this teacher/centre.
     const counts = new Map<string, number>();
     for (const s of list) {
-      if (!s.franchisee_category) continue;
-      counts.set(s.franchisee_category, (counts.get(s.franchisee_category) ?? 0) + 1);
+      const v = s[tierField] as string | null;
+      if (!v) continue;
+      counts.set(v, (counts.get(v) ?? 0) + 1);
     }
     let best: { c: string; n: number } | null = null;
     for (const [c, n] of counts.entries()) {
@@ -105,11 +117,11 @@ function CoachesInner() {
     return grouped.filter((g) => {
       if (q && !g.key.toLowerCase().includes(q)) return false;
       if (Number.isFinite(min) && g.totalPoints < min) return false;
-      if (franchiseeFilter && franchiseeForKey(g.key) !== franchiseeFilter) return false;
+      if (tierFilter && tierForKey(g.key) !== tierFilter) return false;
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [grouped, search, minPoints, franchiseeFilter, studentsByKey]);
+  }, [grouped, search, minPoints, tierFilter, studentsByKey, tierField]);
 
   const sortedTrophies = [...trophyTypes].sort((a, b) => a.display_order - b.display_order);
 
@@ -119,7 +131,7 @@ function CoachesInner() {
       return;
     }
     const stamp = new Date().toISOString().slice(0, 10);
-    const headers = [tab === "teachers" ? "Teacher (CI)" : "Centre", "Franchisee Category"];
+    const headers = [tab === "teachers" ? "Teacher (CI)" : "Centre", tierLabel];
     if (tab === "teachers") headers.push("Centres", "Students");
     else headers.push("Students");
     for (const t of sortedTrophies) headers.push(t.name);
@@ -132,7 +144,7 @@ function CoachesInner() {
     );
 
     const data = filtered.map((g) => {
-      const arr: (string | number)[] = [g.key, franchiseeForKey(g.key)];
+      const arr: (string | number)[] = [g.key, tierForKey(g.key)];
       if (tab === "teachers") arr.push(Array.from(g.centres ?? []).join(", "));
       arr.push(g.studentCount);
       for (const t of sortedTrophies) arr.push(g.trophyCounts[t.id] ?? 0);
@@ -185,7 +197,7 @@ function CoachesInner() {
               columns={[
                 { key: "rank", label: "Rank" },
                 { key: "subject", label: tab === "teachers" ? "Teacher" : "Centre" },
-                { key: "franchisee", label: "Franchisee Category" },
+                { key: "tier", label: tierLabel },
                 ...(tab === "teachers" ? [{ key: "centres", label: "Centres" }] : []),
                 { key: "students", label: "Students" },
                 ...sortedTrophies.map((t) => ({ key: `trophy-${t.id}`, label: t.name })),
@@ -215,14 +227,14 @@ function CoachesInner() {
           icon={tab === "teachers" ? GraduationCap : Building2}
           actions={
             <div className="flex items-center gap-2 flex-wrap">
-              {allFranchiseeCategories.length > 0 && (
+              {allTiers.length > 0 && (
                 <Select
-                  value={franchiseeFilter}
-                  onChange={(e) => setFranchiseeFilter(e.target.value)}
-                  className="h-8 w-44"
+                  value={tierFilter}
+                  onChange={(e) => setTierFilter(e.target.value)}
+                  className="h-8 w-48"
                 >
-                  <option value="">All franchisee cats</option>
-                  {allFranchiseeCategories.map((c) => (
+                  <option value="">All {tierLabel.toLowerCase()}s</option>
+                  {allTiers.map((c) => (
                     <option key={c} value={c}>{c}</option>
                   ))}
                 </Select>
@@ -260,7 +272,7 @@ function CoachesInner() {
                   {cols.isVisible("subject") && (
                     <th>{tab === "teachers" ? "Teacher (CI)" : "Centre"}</th>
                   )}
-                  {cols.isVisible("franchisee") && <th>Franchisee Category</th>}
+                  {cols.isVisible("tier") && <th>{tierLabel}</th>}
                   {tab === "teachers" && cols.isVisible("centres") && <th>Centres</th>}
                   {cols.isVisible("students") && <th className="text-right">Students</th>}
                   {sortedTrophies.map((t) =>
@@ -291,9 +303,9 @@ function CoachesInner() {
                       </td>
                     )}
                     {cols.isVisible("subject") && <td className="font-medium">{g.key}</td>}
-                    {cols.isVisible("franchisee") && (
+                    {cols.isVisible("tier") && (
                       <td className="text-[12px] text-[#4A4843]">
-                        {franchiseeForKey(g.key) || <span className="text-[#A8A39B]">—</span>}
+                        {tierForKey(g.key) || <span className="text-[#A8A39B]">—</span>}
                       </td>
                     )}
                     {tab === "teachers" && cols.isVisible("centres") && (

@@ -147,12 +147,12 @@ function assignTrophies(
 }
 
 // =============================================================
-// Listening / Flash position-based leaderboard
+// Listening / Flash leaderboard — trophy is assigned directly per student
 // =============================================================
 
 export type PositionLeaderboardRow = {
   category: string;
-  position: number;            // 1-based rank entered by the user
+  position: number;            // derived 1-based rank within trophy band
   student: Student;
   trophy: TrophyType | null;
 };
@@ -165,75 +165,100 @@ export type PositionInputs = {
 };
 
 /**
- * Build a leaderboard for the Listening / Flash competitions. These are
- * live-entered, so the rank is the user-supplied position field on each
- * student (`listening_position` or `flash_position`).
- *
- * Trophy rules: per category, allocations describe how many trophies of
- * each type to hand out. Trophies are awarded in trophy display_order to
- * students sorted by ascending position (1 first, then 2, …). Ties / nulls
- * are handled by sorting nulls last.
+ * Build a leaderboard for Listening / Flash. Each student carries a direct
+ * trophy assignment (`listening_trophy_id` / `flash_trophy_id`) entered
+ * live. We group by the student's competition category, then sort by trophy
+ * display_order (Grand Champion first), then alphabetically within a band.
  */
 export function buildPositionLeaderboard({
   students,
   trophyTypes,
-  trophyAllocations,
   competition,
 }: PositionInputs): PositionLeaderboardRow[] {
   const isListening = competition === "listening";
-  const allocs = trophyAllocations.filter((a) => a.competition === competition);
-  const orderedTrophies = [...trophyTypes].sort((a, b) => a.display_order - b.display_order);
+  const trophyById = new Map(trophyTypes.map((t) => [t.id, t]));
 
-  // Group eligible students by their competition's category
-  const grouped = new Map<string, Student[]>();
+  type Entry = { category: string; student: Student; trophy: TrophyType };
+  const entries: Entry[] = [];
   for (const s of students) {
     const cat = (isListening ? s.listening_category : s.flash_category) ?? null;
     if (!cat) continue;
-    if (!grouped.has(cat)) grouped.set(cat, []);
-    grouped.get(cat)!.push(s);
+    const trophyId = isListening ? s.listening_trophy_id : s.flash_trophy_id;
+    if (trophyId == null) continue;
+    const trophy = trophyById.get(trophyId);
+    if (!trophy) continue;
+    entries.push({ category: cat, student: s, trophy });
   }
 
-  const rows: PositionLeaderboardRow[] = [];
-  for (const [category, list] of grouped.entries()) {
-    // Only ranked students factor into the trophy queue.
-    const ranked = list
-      .filter((s) => {
-        const p = isListening ? s.listening_position : s.flash_position;
-        return typeof p === "number" && p > 0;
-      })
-      .sort((a, b) => {
-        const pa = (isListening ? a.listening_position : a.flash_position) ?? Infinity;
-        const pb = (isListening ? b.listening_position : b.flash_position) ?? Infinity;
-        if (pa !== pb) return pa - pb;
-        return (a.full_name || "").localeCompare(b.full_name || "");
-      });
+  // Group by category, then sort by trophy.display_order, then alphabetical
+  const byCat = new Map<string, Entry[]>();
+  for (const e of entries) {
+    if (!byCat.has(e.category)) byCat.set(e.category, []);
+    byCat.get(e.category)!.push(e);
+  }
 
-    // Walk the trophy types in display_order, popping from the front of the
-    // ranked queue to hand out each trophy.
-    const queue = [...ranked];
-    const assignments = new Map<number, TrophyType>();
-    for (const tt of orderedTrophies) {
-      const alloc = allocs.find(
-        (a) => a.category === category && a.trophy_type_id === tt.id
-      );
-      const qty = alloc?.quantity ?? 0;
-      for (let i = 0; i < qty && queue.length > 0; i++) {
-        const winner = queue.shift()!;
-        if (!assignments.has(winner.id)) assignments.set(winner.id, tt);
+  const out: PositionLeaderboardRow[] = [];
+  for (const [category, list] of byCat.entries()) {
+    list.sort((a, b) => {
+      if (a.trophy.display_order !== b.trophy.display_order) {
+        return a.trophy.display_order - b.trophy.display_order;
       }
-    }
-
-    for (const s of ranked) {
-      const position = (isListening ? s.listening_position : s.flash_position) ?? 0;
-      rows.push({
+      return (a.student.full_name || "").localeCompare(b.student.full_name || "");
+    });
+    list.forEach((e, i) => {
+      out.push({
         category,
-        position,
-        student: s,
-        trophy: assignments.get(s.id) ?? null,
+        position: i + 1,
+        student: e.student,
+        trophy: e.trophy,
       });
+    });
+  }
+  return out;
+}
+
+/**
+ * Per-category capacity tracker. For each (category, trophy) pair we report
+ * how many students currently have that trophy assigned, and the cap from
+ * trophy_allocations. The Live (L/F) page uses this to show "Champions: 2/3".
+ */
+export function trophyCapacityFor(
+  students: Student[],
+  trophyTypes: TrophyType[],
+  trophyAllocations: TrophyAllocation[],
+  competition: Extract<Competition, "listening" | "flash">
+): Map<string, Map<number, { used: number; cap: number }>> {
+  const isListening = competition === "listening";
+  const byCatTrophy = new Map<string, Map<number, { used: number; cap: number }>>();
+
+  function ensure(cat: string, trophyId: number) {
+    if (!byCatTrophy.has(cat)) byCatTrophy.set(cat, new Map());
+    const m = byCatTrophy.get(cat)!;
+    if (!m.has(trophyId)) m.set(trophyId, { used: 0, cap: 0 });
+    return m.get(trophyId)!;
+  }
+
+  for (const a of trophyAllocations) {
+    if (a.competition !== competition) continue;
+    ensure(a.category, a.trophy_type_id).cap = a.quantity;
+  }
+
+  for (const s of students) {
+    const cat = (isListening ? s.listening_category : s.flash_category) ?? null;
+    if (!cat) continue;
+    const trophyId = isListening ? s.listening_trophy_id : s.flash_trophy_id;
+    if (trophyId == null) continue;
+    ensure(cat, trophyId).used += 1;
+  }
+
+  // Make sure every trophy_type appears for every category, even if cap=0
+  for (const cat of byCatTrophy.keys()) {
+    for (const tt of trophyTypes) {
+      ensure(cat, tt.id);
     }
   }
-  return rows;
+
+  return byCatTrophy;
 }
 
 /**

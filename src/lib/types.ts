@@ -27,11 +27,14 @@ export type Student = {
   listening_code: string | null;
   listening_position: number | null;  // 1-N rank within listening_category
   flash_category: string | null;      // Flash live competition
-  flash_position: number | null;      // 1-N rank within flash_category
+  flash_position: number | null;      // 1-N rank within flash_category (legacy)
+  listening_trophy_id: number | null; // Direct trophy assignment
+  flash_trophy_id: number | null;     // Direct trophy assignment
   centre: string | null;
   teacher: string | null;
   ci_code: string | null;
-  franchisee_category: string | null; // e.g. "Emerging", "Mid Career"
+  ci_category: string | null;          // per teacher
+  franchisee_category: string | null;  // per centre
   tshirt_size: string | null;
   email: string | null;
   phone: string | null;

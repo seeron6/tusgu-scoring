@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import {
-  Search, ScanLine, Save, ChevronRight, Headphones, Zap, X, RotateCcw, Award,
+  Search, ScanLine, Save, ChevronRight, Headphones, Zap, X, Award,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { Button } from "@/components/ui/button";
@@ -13,9 +13,9 @@ import { BarcodeScannerModal } from "@/components/barcode-scanner";
 import { ProtectedPage } from "@/lib/auth-gate";
 import {
   findStudentByCode, listStudents, listTrophyAllocations, listTrophyTypes,
-  setFlashPosition, setListeningPosition,
+  setFlashTrophy, setListeningTrophy,
 } from "@/lib/data";
-import { buildPositionLeaderboard } from "@/lib/ranking";
+import { trophyCapacityFor } from "@/lib/ranking";
 import type { Student, TrophyAllocation, TrophyType } from "@/lib/types";
 
 type Mode = "listening" | "flash";
@@ -38,7 +38,8 @@ function CompetitionsInner() {
   const [search, setSearch] = React.useState("");
   const [categoryFilter, setCategoryFilter] = React.useState<string>("");
   const [selectedId, setSelectedId] = React.useState<number | null>(null);
-  const [positionDraft, setPositionDraft] = React.useState<string>("");
+  // Draft trophy id ("" = no trophy / clear, "null" semantically; we coerce empty → null on save)
+  const [trophyDraft, setTrophyDraft] = React.useState<string>("");
   const [scannerOpen, setScannerOpen] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
 
@@ -61,7 +62,6 @@ function CompetitionsInner() {
   }
   React.useEffect(() => { load(); }, []);
 
-  // Eligible students = those with a category in the active competition.
   const eligible = React.useMemo(() => {
     return students.filter((s) =>
       mode === "listening" ? s.listening_category : s.flash_category
@@ -99,56 +99,46 @@ function CompetitionsInner() {
     ? (mode === "listening" ? selected.listening_category : selected.flash_category) ?? ""
     : "";
 
-  // Existing position (if any) for the selected student
-  const existingPosition = selected
-    ? mode === "listening" ? selected.listening_position : selected.flash_position
+  const existingTrophyId = selected
+    ? mode === "listening" ? selected.listening_trophy_id : selected.flash_trophy_id
     : null;
 
   React.useEffect(() => {
     if (!selected) {
-      setPositionDraft("");
+      setTrophyDraft("");
       return;
     }
-    setPositionDraft(existingPosition != null ? String(existingPosition) : "");
-  }, [selectedId, existingPosition, selected]);
+    setTrophyDraft(existingTrophyId != null ? String(existingTrophyId) : "");
+  }, [selectedId, existingTrophyId, selected]);
 
-  // Already-ranked positions in the selected category — used to flag
-  // collisions ("position 3 already used by Alice").
-  const usedPositions = React.useMemo(() => {
-    if (!selectedCategory) return new Map<number, Student>();
-    const m = new Map<number, Student>();
-    for (const s of students) {
-      const cat = (mode === "listening" ? s.listening_category : s.flash_category) ?? "";
-      if (cat !== selectedCategory) continue;
-      const p = mode === "listening" ? s.listening_position : s.flash_position;
-      if (typeof p === "number" && p > 0 && s.id !== selectedId) m.set(p, s);
-    }
-    return m;
-  }, [students, selectedCategory, mode, selectedId]);
+  // Capacity for the active competition: { category → { trophyId → {used, cap} } }
+  const capacity = React.useMemo(
+    () => trophyCapacityFor(students, trophyTypes, allocations, mode),
+    [students, trophyTypes, allocations, mode]
+  );
 
-  const draftNum = parseInt(positionDraft, 10);
-  const draftValid = positionDraft === "" || (Number.isFinite(draftNum) && draftNum > 0);
-  const collision = Number.isFinite(draftNum) ? usedPositions.get(draftNum) : undefined;
+  // Trophy ordered list (Grand Champion → Merit) — build the dropdown options.
+  const orderedTrophies = React.useMemo(
+    () => [...trophyTypes].sort((a, b) => a.display_order - b.display_order),
+    [trophyTypes]
+  );
 
-  // What trophy will be awarded for this position?
-  const trophyPreview = React.useMemo(() => {
-    if (!selected || !selectedCategory || !Number.isFinite(draftNum) || draftNum <= 0) return null;
-    const ordered = [...trophyTypes].sort((a, b) => a.display_order - b.display_order);
-    const allocs = allocations.filter(
-      (a) => a.competition === mode && a.category === selectedCategory
-    );
-    let runningPos = 0;
-    for (const tt of ordered) {
-      const alloc = allocs.find((a) => a.trophy_type_id === tt.id);
-      const qty = alloc?.quantity ?? 0;
-      if (qty <= 0) continue;
-      const start = runningPos + 1;
-      const end = runningPos + qty;
-      if (draftNum >= start && draftNum <= end) return tt;
-      runningPos = end;
-    }
-    return null;
-  }, [selected, selectedCategory, draftNum, trophyTypes, allocations, mode]);
+  const draftId = trophyDraft === "" ? null : Number(trophyDraft);
+  const draftTrophy = draftId != null ? trophyTypes.find((t) => t.id === draftId) ?? null : null;
+
+  // Capacity row for the selected category — used to render "X/Y" hints next to each option
+  const catCapacity = selectedCategory ? capacity.get(selectedCategory) : undefined;
+
+  // Will the chosen trophy push the category over capacity?
+  const overCapacity = React.useMemo(() => {
+    if (!selectedCategory || draftId == null || !catCapacity) return false;
+    const c = catCapacity.get(draftId);
+    if (!c) return false;
+    // If this is the same trophy the student already has, we're not increasing.
+    const alreadyHas = existingTrophyId === draftId;
+    const projectedUsed = alreadyHas ? c.used : c.used + 1;
+    return c.cap > 0 && projectedUsed > c.cap;
+  }, [draftId, catCapacity, selectedCategory, existingTrophyId]);
 
   async function handleScan(code: string) {
     setSearch(code);
@@ -170,34 +160,33 @@ function CompetitionsInner() {
     }
   }
 
-  async function savePosition(advance: boolean) {
+  async function saveTrophy(advance: boolean) {
     if (!selected) return;
-    const value = positionDraft === "" ? null : parseInt(positionDraft, 10);
-    if (value !== null && (!Number.isFinite(value) || value <= 0)) {
-      toast.error("Position must be a positive number, or empty to clear");
+    const value = trophyDraft === "" ? null : Number(trophyDraft);
+    if (value !== null && !Number.isFinite(value)) {
+      toast.error("Pick a trophy from the dropdown, or — to clear");
       return;
     }
     setBusy(true);
     try {
       if (mode === "listening") {
-        await setListeningPosition(selected.id, value);
-        // optimistic update
+        await setListeningTrophy(selected.id, value);
         setStudents((all) =>
-          all.map((s) => (s.id === selected.id ? { ...s, listening_position: value } : s))
+          all.map((s) => (s.id === selected.id ? { ...s, listening_trophy_id: value } : s))
         );
       } else {
-        await setFlashPosition(selected.id, value);
+        await setFlashTrophy(selected.id, value);
         setStudents((all) =>
-          all.map((s) => (s.id === selected.id ? { ...s, flash_position: value } : s))
+          all.map((s) => (s.id === selected.id ? { ...s, flash_trophy_id: value } : s))
         );
       }
-      toast.success(value === null ? "Cleared position" : `Saved position ${value}`);
+      const trophyName = value == null ? "no trophy" : trophyTypes.find((t) => t.id === value)?.name ?? "trophy";
+      toast.success(`${selected.full_name}: ${trophyName}`);
       if (advance) {
         const idx = filtered.findIndex((s) => s.id === selected.id);
-        const next = filtered.find(
-          (s, i) => i > idx &&
-            (mode === "listening" ? s.listening_position : s.flash_position) == null
-        );
+        const next = filtered.find((s, i) => i > idx && (
+          mode === "listening" ? s.listening_trophy_id : s.flash_trophy_id
+        ) == null);
         if (next) {
           setSelectedId(next.id);
         } else {
@@ -213,18 +202,17 @@ function CompetitionsInner() {
   }
 
   const remainingUnranked = filtered.filter(
-    (s) => (mode === "listening" ? s.listening_position : s.flash_position) == null
+    (s) => (mode === "listening" ? s.listening_trophy_id : s.flash_trophy_id) == null
   ).length;
-
   const totalRanked = eligible.filter(
-    (s) => (mode === "listening" ? s.listening_position : s.flash_position) != null
+    (s) => (mode === "listening" ? s.listening_trophy_id : s.flash_trophy_id) != null
   ).length;
 
   return (
     <div>
       <PageHeader
         title="Live Competitions"
-        description="Live entry for Listening and Flash competitions. Search a student or scan their barcode/QR, set their position, then jump to the next."
+        description="Live entry for Listening and Flash. Search a student or scan a barcode/QR, pick the trophy from the dropdown, then jump to the next."
         actions={
           <div className="flex items-center bg-white border border-[#E8E3D7] rounded-md p-0.5">
             {([
@@ -263,7 +251,6 @@ function CompetitionsInner() {
         </Card>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-4 lg:gap-6">
-          {/* Left: search + filter + list */}
           <Card padded={false}>
             <div className="px-3 sm:px-4 py-3 border-b border-[#E8E3D7] space-y-2">
               <div className="relative">
@@ -298,7 +285,8 @@ function CompetitionsInner() {
             </div>
             <ul className="max-h-[60vh] lg:max-h-[640px] overflow-y-auto">
               {filtered.slice(0, 200).map((s) => {
-                const pos = mode === "listening" ? s.listening_position : s.flash_position;
+                const tId = mode === "listening" ? s.listening_trophy_id : s.flash_trophy_id;
+                const trophy = tId != null ? trophyTypes.find((t) => t.id === tId) : null;
                 const cat = (mode === "listening" ? s.listening_category : s.flash_category) ?? "";
                 return (
                   <li key={s.id}>
@@ -309,9 +297,9 @@ function CompetitionsInner() {
                       }`}
                     >
                       <div className="flex items-center gap-2">
-                        {pos != null && (
-                          <span className="inline-flex items-center justify-center min-w-[24px] h-5 px-1 rounded text-[10px] font-bold tabular-nums bg-[#1B3A6B] text-white">
-                            {pos}
+                        {trophy && (
+                          <span className="inline-flex items-center justify-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#FAF3DC] border border-[#E5CE8A] text-[#7A5A1A]">
+                            {trophy.icon ?? ""} {trophy.name.replace("Runner Up", "RU")}
                           </span>
                         )}
                         <div className="text-sm font-medium text-[#1F1E1B] truncate flex-1">
@@ -336,13 +324,12 @@ function CompetitionsInner() {
             </ul>
           </Card>
 
-          {/* Right: position editor */}
           <Card padded={false}>
             {selected == null ? (
               <EmptyState
                 icon={mode === "listening" ? Headphones : Zap}
                 title="Pick a student"
-                description={`Search a name, scan a barcode/QR, or click a name on the left to set their ${mode === "listening" ? "Listening" : "Flash"} position.`}
+                description={`Search a name, scan a barcode/QR, or click in the list to assign their ${mode === "listening" ? "Listening" : "Flash"} trophy.`}
               />
             ) : (
               <div>
@@ -373,62 +360,42 @@ function CompetitionsInner() {
 
                 <div className="px-4 sm:px-6 py-5 space-y-4">
                   <div>
-                    <Label>Position in {selectedCategory}</Label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        type="number"
-                        inputMode="numeric"
-                        min={1}
-                        value={positionDraft}
-                        onChange={(e) => setPositionDraft(e.target.value)}
-                        placeholder="—"
-                        className="w-24 text-center text-2xl font-bold"
-                      />
-                      <div className="flex flex-wrap gap-1">
-                        {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
-                          <button
-                            key={n}
-                            onClick={() => setPositionDraft(String(n))}
-                            className={`w-8 h-8 rounded text-[12px] font-semibold tabular-nums transition-colors ${
-                              draftNum === n
-                                ? "bg-[#1B3A6B] text-white"
-                                : "bg-[#F4F1E8] text-[#1B3A6B] hover:bg-[#E5DECF]"
-                            }`}
-                          >
-                            {n}
-                          </button>
-                        ))}
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setPositionDraft("")}
-                          title="Clear"
-                          className="px-2"
-                        >
-                          <RotateCcw className="w-3.5 h-3.5" />
-                        </Button>
-                      </div>
-                    </div>
-                    {!draftValid && (
-                      <div className="text-[11.5px] text-[#B8341A] mt-1">
-                        Enter a positive number, or leave blank to clear.
-                      </div>
-                    )}
-                    {collision && (
+                    <Label>Trophy in {selectedCategory}</Label>
+                    <Select
+                      value={trophyDraft}
+                      onChange={(e) => setTrophyDraft(e.target.value)}
+                      className="text-base"
+                    >
+                      <option value="">— No trophy / clear —</option>
+                      {orderedTrophies.map((t) => {
+                        const c = catCapacity?.get(t.id);
+                        const used = c?.used ?? 0;
+                        const cap = c?.cap ?? 0;
+                        const tag = cap > 0 ? `(${used}/${cap})` : "(no quota)";
+                        return (
+                          <option key={t.id} value={t.id}>
+                            {t.icon ? `${t.icon} ` : ""}{t.name} {tag}
+                          </option>
+                        );
+                      })}
+                    </Select>
+                    {overCapacity && (
                       <div className="text-[11.5px] text-[#B8651A] bg-[#FAF1E5] border border-[#F0DEB8] rounded-md px-2.5 py-1.5 mt-2">
-                        Position {draftNum} is currently held by{" "}
-                        <strong>{collision.full_name}</strong>. Saving will leave both at the same
-                        position — you may want to renumber.
+                        Saving will exceed the configured quota for{" "}
+                        <strong>{draftTrophy?.name}</strong> in <strong>{selectedCategory}</strong>{" "}
+                        — the assignment goes through anyway, just review allocations on the Awards
+                        page if that wasn&apos;t intended.
                       </div>
                     )}
                   </div>
 
-                  {trophyPreview && (
+                  {draftTrophy && (
                     <div className="flex items-center gap-2 text-[12.5px] text-[#1F1E1B] bg-[#FAF3DC] border border-[#E5CE8A] rounded-md px-3 py-2">
                       <Award className="w-4 h-4 text-[#7A5A1A]" />
                       <span>
-                        At position <strong>{draftNum}</strong> in {selectedCategory}, this earns:{" "}
-                        <strong>{trophyPreview.icon} {trophyPreview.name}</strong>
+                        {selected.full_name} will earn{" "}
+                        <strong>{draftTrophy.icon} {draftTrophy.name}</strong> in{" "}
+                        {selectedCategory}.
                       </span>
                     </div>
                   )}
@@ -437,8 +404,8 @@ function CompetitionsInner() {
                 <div className="px-4 sm:px-6 py-4 border-t border-[#E8E3D7] bg-[#FAF9F5] flex flex-col sm:flex-row gap-2">
                   <Button
                     variant="outline"
-                    onClick={() => savePosition(false)}
-                    disabled={busy || !draftValid}
+                    onClick={() => saveTrophy(false)}
+                    disabled={busy}
                     size="lg"
                     className="flex-1"
                   >
@@ -446,8 +413,8 @@ function CompetitionsInner() {
                     Save
                   </Button>
                   <Button
-                    onClick={() => savePosition(true)}
-                    disabled={busy || !draftValid}
+                    onClick={() => saveTrophy(true)}
+                    disabled={busy}
                     size="lg"
                     className="flex-1"
                   >
@@ -467,17 +434,15 @@ function CompetitionsInner() {
         onResult={handleScan}
       />
 
-      {/* Quick reference: trophy allocation per category */}
       {!loading && allCategories.length > 0 && (
         <Card padded={false} className="mt-6">
-          <CardHeader title={`${mode === "listening" ? "Listening" : "Flash"} trophy positions`} icon={Award} />
+          <CardHeader title={`${mode === "listening" ? "Listening" : "Flash"} category overview`} icon={Award} />
           <div className="p-5 text-[12.5px] text-[#4A4843] leading-relaxed">
             <CategoryAllocationOverview
               competition={mode}
               categories={allCategories}
-              students={eligible}
-              trophyTypes={trophyTypes}
-              allocations={allocations}
+              capacity={capacity}
+              orderedTrophies={orderedTrophies}
             />
           </div>
         </Card>
@@ -487,65 +452,46 @@ function CompetitionsInner() {
 }
 
 function CategoryAllocationOverview({
-  competition, categories, students, trophyTypes, allocations,
+  categories, capacity, orderedTrophies,
 }: {
   competition: Mode;
   categories: string[];
-  students: Student[];
-  trophyTypes: TrophyType[];
-  allocations: TrophyAllocation[];
+  capacity: Map<string, Map<number, { used: number; cap: number }>>;
+  orderedTrophies: TrophyType[];
 }) {
-  // Show: Category | total entrants | how many ranked | which positions earn which trophy
-  const ordered = [...trophyTypes].sort((a, b) => a.display_order - b.display_order);
-  const rows = buildPositionLeaderboard({
-    students,
-    trophyTypes,
-    trophyAllocations: allocations,
-    competition,
-  });
-
   return (
     <div className="overflow-x-auto">
       <table className="tusgu-table">
         <thead>
           <tr>
             <th>Category</th>
-            <th className="text-right">Entrants</th>
-            <th className="text-right">Ranked</th>
-            {ordered.map((t) => (
+            {orderedTrophies.map((t) => (
               <th key={t.id} className="text-right">{t.name.replace("Runner Up", "RU")}</th>
             ))}
           </tr>
         </thead>
         <tbody>
           {categories.map((c) => {
-            const inCat = students.filter(
-              (s) => (competition === "listening" ? s.listening_category : s.flash_category) === c
-            );
-            const rankedInCat = inCat.filter((s) =>
-              competition === "listening" ? s.listening_position != null : s.flash_position != null
-            ).length;
-            const winners = rows.filter((r) => r.category === c);
+            const cm = capacity.get(c);
             return (
               <tr key={c}>
                 <td className="font-medium">{c}</td>
-                <td className="text-right tabular-nums">{inCat.length}</td>
-                <td className="text-right tabular-nums">{rankedInCat}</td>
-                {ordered.map((t) => {
-                  const alloc = allocations.find(
-                    (a) => a.competition === competition && a.category === c && a.trophy_type_id === t.id
-                  );
-                  const qty = alloc?.quantity ?? 0;
-                  const claimed = winners.filter((w) => w.trophy?.id === t.id).length;
+                {orderedTrophies.map((t) => {
+                  const v = cm?.get(t.id);
+                  const used = v?.used ?? 0;
+                  const cap = v?.cap ?? 0;
+                  if (cap === 0 && used === 0) {
+                    return <td key={t.id} className="text-right text-[#A8A39B]">—</td>;
+                  }
+                  const overshot = cap > 0 && used > cap;
+                  const tone = overshot
+                    ? "text-[#B8341A] font-semibold"
+                    : used === cap && cap > 0
+                    ? "font-semibold text-[#5A8E54]"
+                    : "";
                   return (
-                    <td key={t.id} className="text-right tabular-nums">
-                      {qty === 0 ? (
-                        <span className="text-[#A8A39B]">—</span>
-                      ) : (
-                        <span className={claimed >= qty ? "font-semibold text-[#5A8E54]" : ""}>
-                          {claimed}/{qty}
-                        </span>
-                      )}
+                    <td key={t.id} className={`text-right tabular-nums ${tone}`}>
+                      {used}{cap > 0 ? `/${cap}` : ""}
                     </td>
                   );
                 })}
