@@ -358,13 +358,23 @@ function CompetitionsInner() {
                   </button>
                 </div>
 
-                <div className="px-4 sm:px-6 py-5 space-y-4">
+                <div
+                  className="px-4 sm:px-6 py-5 space-y-4"
+                  onKeyDown={(e) => {
+                    // Enter = Save & Next so the live workflow is keyboard-only.
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      saveTrophy(true);
+                    }
+                  }}
+                >
                   <div>
                     <Label>Trophy in {selectedCategory}</Label>
                     <Select
                       value={trophyDraft}
                       onChange={(e) => setTrophyDraft(e.target.value)}
                       className="text-base"
+                      autoFocus
                     >
                       <option value="">— No trophy / clear —</option>
                       {orderedTrophies.map((t) => {
@@ -420,6 +430,7 @@ function CompetitionsInner() {
                   >
                     Save & Next
                     <ChevronRight className="w-4 h-4" />
+                    <span className="text-[10px] opacity-60 ml-1">⏎</span>
                   </Button>
                 </div>
               </div>

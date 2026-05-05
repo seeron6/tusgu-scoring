@@ -142,7 +142,10 @@ export function PageHeader({
   actions?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-4 sm:gap-6 mb-6 md:mb-8">
+    // Stack actions BELOW the title until lg (1024px). On smaller screens
+    // the action row had been squeezing the description into a 1-word-wide
+    // column on pages with a lot of toolbar buttons (Leaderboard).
+    <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4 lg:gap-6 mb-6 md:mb-8">
       <div className="min-w-0">
         <h1 className="font-serif text-[22px] sm:text-[26px] md:text-[28px] leading-tight font-semibold text-[#1F1E1B] tracking-tight">
           {title}
@@ -153,7 +156,11 @@ export function PageHeader({
           </p>
         )}
       </div>
-      {actions && <div className="flex items-center gap-2 shrink-0 flex-wrap">{actions}</div>}
+      {actions && (
+        <div className="flex items-center gap-2 flex-wrap lg:shrink-0 lg:flex-nowrap">
+          {actions}
+        </div>
+      )}
     </div>
   );
 }

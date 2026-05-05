@@ -54,6 +54,7 @@ export default function StudentsPage() {
   const [confirmDelete, setConfirmDelete] = React.useState<Student | null>(null);
   const [scannerOpen, setScannerOpen] = React.useState(false);
   const [pendingAction, setPendingAction] = React.useState<null | (() => void)>(null);
+  const [detailOf, setDetailOf] = React.useState<Student | null>(null);
   const { unlocked } = useAuth();
 
   async function load() {
@@ -302,7 +303,11 @@ export default function StudentsPage() {
                 </thead>
                 <tbody>
                   {paged.map((s) => (
-                    <tr key={s.id}>
+                    <tr
+                      key={s.id}
+                      onClick={() => setDetailOf(s)}
+                      className="cursor-pointer"
+                    >
                       {visibleColumns.map((c) => (
                         <td key={String(c.key)}>
                           {c.render
@@ -313,7 +318,7 @@ export default function StudentsPage() {
                       {visibleColumns.some((c) => c.key === "dob") && (
                         <td>{calculateAge(s.dob) ?? ""}</td>
                       )}
-                      <td>
+                      <td onClick={(e) => e.stopPropagation()}>
                         <div className="flex gap-1">
                           <Button
                             variant="ghost"
@@ -378,6 +383,17 @@ export default function StudentsPage() {
         destructive
       />
       <ImportModal open={importOpen} onClose={() => setImportOpen(false)} onComplete={load} />
+      <StudentDetailModal
+        student={detailOf}
+        onClose={() => setDetailOf(null)}
+        onEdit={(s) =>
+          gateThen(() => {
+            setDetailOf(null);
+            setEditing(s);
+            setEditOpen(true);
+          })
+        }
+      />
       <BarcodeScannerModal
         open={scannerOpen}
         onClose={() => setScannerOpen(false)}
@@ -439,6 +455,11 @@ function StudentModal({
   const [studentCode, setStudentCode] = React.useState("");
   const [examCode, setExamCode] = React.useState("");
   const [email, setEmail] = React.useState("");
+  const [phone, setPhone] = React.useState("");
+  const [listeningCategory, setListeningCategory] = React.useState("");
+  const [flashCategory, setFlashCategory] = React.useState("");
+  const [ciCategory, setCiCategory] = React.useState("");
+  const [franchiseeCategory, setFranchiseeCategory] = React.useState("");
   const [busy, setBusy] = React.useState(false);
 
   React.useEffect(() => {
@@ -451,6 +472,11 @@ function StudentModal({
     setStudentCode(editing?.student_code ?? "");
     setExamCode(editing?.exam_code ?? "");
     setEmail(editing?.email ?? "");
+    setPhone(editing?.phone ?? "");
+    setListeningCategory(editing?.listening_category ?? "");
+    setFlashCategory(editing?.flash_category ?? "");
+    setCiCategory(editing?.ci_category ?? "");
+    setFranchiseeCategory(editing?.franchisee_category ?? "");
   }, [editing, open]);
 
   async function submit() {
@@ -467,9 +493,22 @@ function StudentModal({
         student_code: studentCode.trim() || null,
         exam_code: examCode.trim() || null,
         email: email.trim() || null,
+        phone: phone.trim() || null,
+        listening_category: listeningCategory.trim() || null,
+        flash_category: flashCategory.trim() || null,
+        ci_category: ciCategory.trim() || null,
+        franchisee_category: franchiseeCategory.trim() || null,
       });
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Pressing Enter in any field saves the form (unless focus is in a textarea)
+  function onKeyDown(e: React.KeyboardEvent) {
+    if (e.key === "Enter" && !(e.target as HTMLElement).tagName.match(/^TEXTAREA$/i)) {
+      e.preventDefault();
+      submit();
     }
   }
 
@@ -478,22 +517,22 @@ function StudentModal({
       open={open}
       onClose={onClose}
       title={editing ? "Edit Student" : "Add Student"}
-      width="max-w-lg"
+      width="max-w-2xl"
       footer={
         <>
           <Button variant="outline" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
           <Button onClick={submit} disabled={busy}>
-            {editing ? "Save" : "Create"}
+            {editing ? "Save" : "Create"} <span className="text-[10px] opacity-60 ml-1">⏎</span>
           </Button>
         </>
       }
     >
-      <div className="space-y-3">
+      <div className="space-y-3" onKeyDown={onKeyDown}>
         <div>
           <Label>Full Name *</Label>
-          <Input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Student Fullname" />
+          <Input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Student Fullname" autoFocus />
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
@@ -510,8 +549,18 @@ function StudentModal({
             </Select>
           </div>
           <div>
-            <Label>Category</Label>
+            <Label>Category (Visual)</Label>
             <Input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="A1, B2, Z3" />
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <Label>Listening Category</Label>
+            <Input value={listeningCategory} onChange={(e) => setListeningCategory(e.target.value)} placeholder="Novice / Competent…" />
+          </div>
+          <div>
+            <Label>Flash Category</Label>
+            <Input value={flashCategory} onChange={(e) => setFlashCategory(e.target.value)} />
           </div>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -524,6 +573,16 @@ function StudentModal({
             <Input value={teacher} onChange={(e) => setTeacher(e.target.value)} />
           </div>
         </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <Label>CI Category</Label>
+            <Input value={ciCategory} onChange={(e) => setCiCategory(e.target.value)} placeholder="Mid Career, Franchisees Who are CI's…" />
+          </div>
+          <div>
+            <Label>Franchisee Category</Label>
+            <Input value={franchiseeCategory} onChange={(e) => setFranchiseeCategory(e.target.value)} placeholder="Emerging, Mid Career…" />
+          </div>
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
             <Label>Student Code</Label>
@@ -534,12 +593,135 @@ function StudentModal({
             <Input value={examCode} onChange={(e) => setExamCode(e.target.value)} placeholder="VA3-039" />
           </div>
           <div>
-            <Label>Email</Label>
-            <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="parent@example.com" />
+            <Label>Phone</Label>
+            <Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="07x-xxx-xxxx" />
           </div>
+        </div>
+        <div>
+          <Label>Email</Label>
+          <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="parent@example.com" />
         </div>
       </div>
     </Modal>
+  );
+}
+
+// =============================================================
+// Student detail modal — read-only view of every populated field
+// =============================================================
+
+function StudentDetailModal({
+  student, onClose, onEdit,
+}: {
+  student: Student | null;
+  onClose: () => void;
+  onEdit: (s: Student) => void;
+}) {
+  if (!student) return null;
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={student.full_name}
+      width="max-w-2xl"
+      description={[student.category, student.centre, student.teacher].filter(Boolean).join(" · ") || undefined}
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose}>Close</Button>
+          <Button onClick={() => onEdit(student)}>
+            <Pencil className="w-3.5 h-3.5" /> Edit
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-5">
+        <DetailGroup title="Identity">
+          <DetailField label="Full Name" value={student.full_name} />
+          <DetailField label="Student Code" value={student.student_code} />
+          <DetailField label="Exam Code (barcode)" value={student.exam_code} mono />
+          <DetailField label="Barcode" value={student.barcode} mono />
+          <DetailField label="Date of Birth" value={formatDate(student.dob) || student.dob} />
+          <DetailField label="Age" value={calculateAge(student.dob) ?? null} />
+          <DetailField label="Gender" value={student.gender} />
+        </DetailGroup>
+
+        <DetailGroup title="Visual competition">
+          <DetailField label="Category" value={student.category} />
+          <DetailField label="Level" value={student.level} />
+        </DetailGroup>
+
+        <DetailGroup title="Listening competition">
+          <DetailField label="Category" value={student.listening_category} />
+          <DetailField label="Listening Code" value={student.listening_code} />
+          <DetailField label="Position (legacy)" value={student.listening_position} />
+        </DetailGroup>
+
+        <DetailGroup title="Flash competition">
+          <DetailField label="Category" value={student.flash_category} />
+          <DetailField label="Position (legacy)" value={student.flash_position} />
+        </DetailGroup>
+
+        <DetailGroup title="Centre & teacher">
+          <DetailField label="Centre" value={student.centre} />
+          <DetailField label="Teacher (CI)" value={student.teacher} />
+          <DetailField label="CI Code" value={student.ci_code} />
+          <DetailField label="CI Category" value={student.ci_category} />
+          <DetailField label="Franchisee Category" value={student.franchisee_category} />
+        </DetailGroup>
+
+        <DetailGroup title="Contact & logistics">
+          <DetailField label="Email" value={student.email} />
+          <DetailField label="Phone" value={student.phone} />
+          <DetailField label="T-Shirt Size" value={student.tshirt_size} />
+          <DetailField label="Report Time" value={student.report_time} />
+          <DetailField label="Comp Time" value={student.comp_time} />
+          <DetailField label="Deduction" value={student.deduction} />
+        </DetailGroup>
+
+        {student.extra && Object.keys(student.extra).length > 0 && (
+          <DetailGroup title="Extra (unmapped columns from import)">
+            {Object.entries(student.extra).map(([k, v]) => (
+              <DetailField key={k} label={k} value={v == null ? null : String(v)} />
+            ))}
+          </DetailGroup>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+function DetailGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  // Hide the group entirely if every child reports it has nothing to show.
+  const arr = React.Children.toArray(children);
+  const hasAny = arr.some((c) => {
+    if (!React.isValidElement<{ value?: unknown }>(c)) return false;
+    const v = c.props?.value;
+    return v != null && v !== "";
+  });
+  if (!hasAny) return null;
+  return (
+    <section>
+      <div className="text-[10px] uppercase tracking-wider text-[#7A7770] font-semibold mb-2">{title}</div>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-[13px]">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function DetailField({
+  label, value, mono,
+}: {
+  label: string;
+  value: string | number | null | undefined;
+  mono?: boolean;
+}) {
+  if (value == null || value === "") return null;
+  return (
+    <div className="flex items-baseline gap-2 border-b border-[#F0EDE5] py-1.5">
+      <span className="text-[#7A7770] min-w-[8rem] shrink-0">{label}</span>
+      <span className={`text-[#1F1E1B] font-medium ${mono ? "font-mono" : ""}`}>{String(value)}</span>
+    </div>
   );
 }
 

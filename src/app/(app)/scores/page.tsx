@@ -281,7 +281,15 @@ function ScoresInner() {
                     <X className="w-4 h-4" />
                   </button>
                 </div>
-                <div className="px-4 sm:px-6 py-5 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div
+                  className="px-4 sm:px-6 py-5 grid grid-cols-1 sm:grid-cols-2 gap-4"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      save();
+                    }
+                  }}
+                >
                   {questionTypes.map((qt) => {
                     const raw = scoreText[qt.id] ?? "";
                     const n = parseInt(raw, 10);
@@ -353,6 +361,7 @@ function ScoresInner() {
                   <Button onClick={save} disabled={busy} size="lg" className="w-full sm:w-auto">
                     <Save className="w-4 h-4" />
                     {busy ? "Saving…" : "Save Scores"}
+                    <span className="text-[10px] opacity-60 ml-1">⏎</span>
                   </Button>
                 </div>
               </div>
