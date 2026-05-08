@@ -37,8 +37,12 @@ export function CoachesImportModal({
   const [file, setFile] = React.useState<File | null>(null);
   const [nameCol, setNameCol] = React.useState<string>("");
   const [categoryCol, setCategoryCol] = React.useState<string>("");
-  // 0-based index into `data.rows`; rows < splitIndex are CIs, ≥ are Centres.
+  // 0-based index into `data.rows` — the dividing line between the two stacked tables.
   const [splitIndex, setSplitIndex] = React.useState<number>(0);
+  // Which section is on top? Sheets vary — some put Centres above CIs, others
+  // the other way around. Auto-detected from the section header that appears
+  // first in the sheet, with a toggle so the user can flip it.
+  const [topSection, setTopSection] = React.useState<"centres" | "cis">("centres");
   const [busy, setBusy] = React.useState(false);
   const [progress, setProgress] = React.useState<{ phase: string; done: number; total: number } | null>(null);
   const [result, setResult] = React.useState<{
@@ -57,6 +61,7 @@ export function CoachesImportModal({
     setNameCol("");
     setCategoryCol("");
     setSplitIndex(0);
+    setTopSection("centres");
     setResult(null);
     setProgress(null);
   }
@@ -71,17 +76,48 @@ export function CoachesImportModal({
         toast.error("Empty workbook");
         return;
       }
-      // Heuristic auto-pick: if a header looks like "centre"/"center"/"centers"
-      // appears mid-sheet, that's the split. Otherwise default to halfway.
+      // Auto-detect both the top-section type and the split row.
+      //
+      // We look for "section header" rows — rows whose first non-empty cell
+      // is literally "Centre"/"Centers"/"Centres" or "CI"/"CIs"/"Teacher"/"Teachers"
+      // (anything else in the row is ignored). The first such marker tells us
+      // which section is on top; the second marker tells us where the bottom
+      // section begins. The split row is the row immediately AFTER that
+      // marker (we skip the marker itself plus its column header).
       const lowerCells = sheet.rows.map((r) =>
         Object.values(r).map((v) => String(v ?? "").toLowerCase())
       );
-      let detectedSplit = -1;
-      for (let i = 1; i < lowerCells.length; i++) {
+      const isCentre = (c: string) => /^(centres?|centers?)$/.test(c.trim());
+      const isCi = (c: string) => /^(ci|ci\s*['']?s|cis|teachers?)$/.test(c.trim());
+
+      type Marker = { rowIndex: number; kind: "centres" | "cis" };
+      const markers: Marker[] = [];
+      for (let i = 0; i < lowerCells.length; i++) {
         const cells = lowerCells[i];
-        if (cells.some((c) => /^(centres?|centers?)$/.test(c.trim()))) {
-          detectedSplit = i + 1; // skip the header row itself
-          break;
+        if (cells.some(isCentre)) markers.push({ rowIndex: i, kind: "centres" });
+        else if (cells.some(isCi)) markers.push({ rowIndex: i, kind: "cis" });
+      }
+
+      let detectedTop: "centres" | "cis" = "centres";
+      let detectedSplit = -1;
+      if (markers.length >= 2) {
+        detectedTop = markers[0].kind;
+        // Skip the marker row itself and the header row that usually follows
+        // it. If the marker row already has a "Name" / "Category" cell,
+        // there's no separate header row, so just skip 1.
+        const hasInlineHeader = lowerCells[markers[1].rowIndex].some(
+          (c) => /^(name|teacher|centre|center|category)$/.test(c.trim())
+        );
+        detectedSplit = markers[1].rowIndex + (hasInlineHeader ? 1 : 0);
+      } else if (markers.length === 1) {
+        // Single marker — its position tells us which section is on TOP if
+        // the marker is at the very start of the sheet, otherwise where the
+        // SECOND section starts.
+        if (markers[0].rowIndex <= 1) {
+          detectedTop = markers[0].kind;
+        } else {
+          detectedTop = markers[0].kind === "centres" ? "cis" : "centres";
+          detectedSplit = markers[0].rowIndex + 1;
         }
       }
       setData({
@@ -99,6 +135,7 @@ export function CoachesImportModal({
       setNameCol(nameGuess);
       setCategoryCol(catGuess);
       setSplitIndex(detectedSplit > 0 ? detectedSplit : Math.floor(sheet.rows.length / 2));
+      setTopSection(detectedTop);
       setStage("map");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to parse file");
@@ -122,6 +159,7 @@ export function CoachesImportModal({
   }
 
   // Build the proposed updates without hitting the network — pure preview.
+  // `topSection` decides whether rows above/below the split are CIs or Centres.
   const previewLists = React.useMemo(() => {
     if (!data || !nameCol || !categoryCol) {
       return { ciList: [], centreList: [] };
@@ -133,11 +171,13 @@ export function CoachesImportModal({
       const name = String(row[nameCol] ?? "").trim();
       const cat = String(row[categoryCol] ?? "").trim();
       if (!name || !cat) continue;
-      const target = i < splitIndex ? ciList : centreList;
+      const inTop = i < splitIndex;
+      const isCentreRow = (topSection === "centres" && inTop) || (topSection === "cis" && !inTop);
+      const target = isCentreRow ? centreList : ciList;
       target.push({ row: i + 2, name, category: cat });
     }
     return { ciList, centreList };
-  }, [data, nameCol, categoryCol, splitIndex]);
+  }, [data, nameCol, categoryCol, splitIndex, topSection]);
 
   // For matching: teachers and centres present in the database.
   const dbTeachers = React.useMemo(() => {
@@ -332,9 +372,26 @@ export function CoachesImportModal({
           </div>
 
           <div>
+            <Label>Top section</Label>
+            <div className="flex items-center bg-[#F4F1E8] rounded-md p-0.5 w-fit mb-2">
+              {(["centres", "cis"] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTopSection(t)}
+                  className={`px-3 py-1.5 text-[12px] font-medium rounded transition-colors ${
+                    topSection === t ? "bg-white text-[#1B3A6B] shadow-sm" : "text-[#7A7770]"
+                  }`}
+                >
+                  {t === "centres" ? "Centres on top" : "CIs on top"}
+                </button>
+              ))}
+            </div>
             <Label className="flex items-center gap-1.5">
               <Scissors className="w-3 h-3" />
-              Split row (rows above this point are CIs; this row & below are Centres)
+              Split row {topSection === "centres"
+                ? "(rows above = Centres, this row & below = CIs)"
+                : "(rows above = CIs, this row & below = Centres)"}
             </Label>
             <div className="flex items-center gap-2 mb-2">
               <Input
@@ -346,8 +403,9 @@ export function CoachesImportModal({
                 className="w-24 text-center"
               />
               <span className="text-[11.5px] text-[#7A7770]">
-                {splitIndex} CI rows above · {data.rows.length - splitIndex} Centre rows from row{" "}
-                {splitIndex + 2} down
+                {splitIndex} {topSection === "centres" ? "Centre" : "CI"} rows above ·{" "}
+                {data.rows.length - splitIndex} {topSection === "centres" ? "CI" : "Centre"} rows
+                from row {splitIndex + 2} down
               </span>
             </div>
             <div className="border border-[#E8E3D7] rounded-md max-h-[40vh] overflow-y-auto">
@@ -363,14 +421,16 @@ export function CoachesImportModal({
                 <tbody>
                   {data.rows.slice(0, 200).map((r, i) => {
                     const isSplit = i === splitIndex;
-                    const inCi = i < splitIndex;
+                    const inTop = i < splitIndex;
+                    const inCentre = (topSection === "centres" && inTop) || (topSection === "cis" && !inTop);
+                    const bottomLabel = topSection === "centres" ? "CIs start here" : "Centres start here";
                     return (
                       <React.Fragment key={i}>
                         {isSplit && (
                           <tr>
                             <td colSpan={Math.min(7, data.headers.length + 1)} className="!p-0">
                               <div className="bg-[#1B3A6B] text-white text-[10px] uppercase tracking-wider px-3 py-1 flex justify-between items-center">
-                                <span>Centres start here</span>
+                                <span>{bottomLabel}</span>
                                 <span className="opacity-80">row {i + 2}</span>
                               </div>
                             </td>
@@ -379,7 +439,7 @@ export function CoachesImportModal({
                         <tr
                           onClick={() => setSplitIndex(i)}
                           className={`cursor-pointer ${
-                            inCi ? "bg-[#FAF3DC]/40" : "bg-[#F4F1E8]/40"
+                            inCentre ? "bg-[#F4F1E8]/40" : "bg-[#FAF3DC]/40"
                           } hover:bg-[#F4F1E8]`}
                           title="Click to split here"
                         >
