@@ -113,6 +113,40 @@ export async function deleteStudent(id: number): Promise<void> {
   if (error) throw error;
 }
 
+/**
+ * Set the CI Category on every student whose teacher matches the given name.
+ * Match is case-insensitive (Postgres `ilike` doesn't fit equality, so we use
+ * `eq` against a normalised teacher value — close enough for real names).
+ */
+export async function setCiCategoryForTeacher(
+  teacherName: string,
+  ciCategory: string | null
+): Promise<number> {
+  const trimmed = teacherName.trim();
+  if (!trimmed) return 0;
+  const { error, count } = await supabase()
+    .from("students")
+    .update({ ci_category: ciCategory }, { count: "exact" })
+    .eq("teacher", trimmed);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+/** Same idea for centres → franchisee_category. */
+export async function setFranchiseeCategoryForCentre(
+  centreName: string,
+  franchiseeCategory: string | null
+): Promise<number> {
+  const trimmed = centreName.trim();
+  if (!trimmed) return 0;
+  const { error, count } = await supabase()
+    .from("students")
+    .update({ franchisee_category: franchiseeCategory }, { count: "exact" })
+    .eq("centre", trimmed);
+  if (error) throw error;
+  return count ?? 0;
+}
+
 /** Bulk insert; rows are batched so a 2.5k import doesn't hit Supabase row limits. */
 export async function bulkInsertStudents(rows: StudentInsert[]): Promise<number> {
   if (rows.length === 0) return 0;

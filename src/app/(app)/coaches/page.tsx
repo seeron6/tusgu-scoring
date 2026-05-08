@@ -1,6 +1,8 @@
 "use client";
 import * as React from "react";
-import { GraduationCap, Building2, Download, FileSpreadsheet, FileType } from "lucide-react";
+import { GraduationCap, Building2, FileSpreadsheet, FileType, Upload } from "lucide-react";
+import { CoachesImportModal } from "@/components/coaches-import-modal";
+import { CoachDetailModal } from "@/components/coach-detail-modal";
 import toast from "react-hot-toast";
 import { Button } from "@/components/ui/button";
 import { Input, Label, Select } from "@/components/ui/input";
@@ -38,6 +40,9 @@ function CoachesInner() {
   const [tierFilter, setTierFilter] = React.useState<string>("");
   const [allTiers, setAllTiers] = React.useState<string[]>([]);
   const [studentsByKey, setStudentsByKey] = React.useState<Map<string, Student[]>>(new Map());
+  const [allStudents, setAllStudents] = React.useState<Student[]>([]);
+  const [importOpen, setImportOpen] = React.useState(false);
+  const [detailOf, setDetailOf] = React.useState<string | null>(null);
 
   // Teachers tab uses ci_category; Centres tab uses franchisee_category.
   const tierField: keyof Student = tab === "teachers" ? "ci_category" : "franchisee_category";
@@ -55,6 +60,7 @@ function CoachesInner() {
         listTrophyAllocations(),
       ]);
       setTrophyTypes(types);
+      setAllStudents(students);
 
       // Build trophy assignments for all three competitions, then roll them
       // up by teacher (or centre).
@@ -211,6 +217,9 @@ function CoachesInner() {
               onToggle={cols.toggle}
               onResetAll={cols.reset}
             />
+            <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+              <Upload className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Import categories</span>
+            </Button>
             <Button variant="outline" size="sm" onClick={() => exportData("xlsx")}>
               <FileSpreadsheet className="w-3.5 h-3.5" /> <span className="hidden sm:inline">xlsx</span>
             </Button>
@@ -292,7 +301,11 @@ function CoachesInner() {
               </thead>
               <tbody>
                 {filtered.map((g, i) => (
-                  <tr key={g.key}>
+                  <tr
+                    key={g.key}
+                    onClick={() => setDetailOf(g.key)}
+                    className="cursor-pointer"
+                  >
                     {cols.isVisible("rank") && (
                       <td>
                         <span className={`inline-flex items-center justify-center min-w-[26px] h-[24px] px-1.5 rounded text-[12px] font-semibold tabular-nums ${
@@ -356,6 +369,21 @@ function CoachesInner() {
           </div>
         )}
       </Card>
+
+      <CoachesImportModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        students={allStudents}
+        onComplete={load}
+      />
+      <CoachDetailModal
+        open={detailOf !== null}
+        onClose={() => setDetailOf(null)}
+        kind={tab === "teachers" ? "teacher" : "centre"}
+        name={detailOf}
+        allStudents={allStudents}
+        onSaved={load}
+      />
     </div>
   );
 }
