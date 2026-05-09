@@ -2,6 +2,7 @@ import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import type { LeaderboardRow, QuestionType, TrophyType } from "./types";
 import { groupByTrophyAlphabetical } from "./ranking";
+import { formatStudentDob } from "./utils";
 
 const NAVY: [number, number, number] = [27, 58, 107];
 const TEXT: [number, number, number] = [31, 30, 27];
@@ -128,7 +129,7 @@ export function leaderboardToPdf(
       }
       arr.push(
         r.trophy ? stripEmoji(r.trophy.name) : "-",
-        r.student.dob ?? "",
+        formatStudentDob(r.student),
         r.age ?? "",
         r.student.centre ?? "",
         r.student.teacher ?? ""
@@ -164,16 +165,23 @@ export function leaderboardToPdf(
 // =============================================================
 // Awards PDF — by category, by trophy band, alphabetical within band.
 // Only includes students who actually won a trophy (no participation row).
-// Columns: Name, Trophy, Centre, Teacher.
-// This is what "Leaderboard with trophies, no scores" exports.
+// Columns: Name, Trophy, Centre, Teacher [, Score].
+// `withScores` adds a final Score column for the "with-scores" export option.
 // =============================================================
 
-export function awardsToPdf(rows: LeaderboardRow[], opts: PdfOptions = {}): ArrayBuffer {
+export type AwardsPdfOptions = PdfOptions & {
+  withScores?: boolean;
+};
+
+export function awardsToPdf(rows: LeaderboardRow[], opts: AwardsPdfOptions = {}): ArrayBuffer {
   const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
+  const showScores = !!opts.withScores;
   header(
     doc,
     opts.title ?? "Awards & Trophies",
-    opts.subtitle ?? "Winners listed alphabetically within each trophy band."
+    opts.subtitle ?? (showScores
+      ? "Winners listed alphabetically within each trophy band, with their scores."
+      : "Winners listed alphabetically within each trophy band.")
   );
 
   // Drop everyone who isn't a winner BEFORE grouping so empty categories
@@ -241,13 +249,19 @@ export function awardsToPdf(rows: LeaderboardRow[], opts: PdfOptions = {}): Arra
       );
       y += 8;
 
-      const head = [["Name", "Trophy", "Centre", "Teacher"]];
-      const body = g.rows.map((r) => [
-        r.student.full_name,
-        stripEmoji(g.trophy!.name),
-        r.student.centre ?? "",
-        r.student.teacher ?? "",
-      ]);
+      const head = showScores
+        ? [["Name", "Trophy", "Centre", "Teacher", "Score"]]
+        : [["Name", "Trophy", "Centre", "Teacher"]];
+      const body = g.rows.map((r) => {
+        const base: (string | number)[] = [
+          r.student.full_name,
+          stripEmoji(g.trophy!.name),
+          r.student.centre ?? "",
+          r.student.teacher ?? "",
+        ];
+        if (showScores) base.push(r.totalScore);
+        return base;
+      });
 
       autoTable(doc, {
         head,
@@ -264,7 +278,9 @@ export function awardsToPdf(rows: LeaderboardRow[], opts: PdfOptions = {}): Arra
         },
         headStyles: { fillColor: BG_ALT, textColor: MUTED, fontStyle: "bold", fontSize: 7.5 },
         alternateRowStyles: { fillColor: [255, 255, 255] },
-        columnStyles: { 0: { fontStyle: "bold" } },
+        columnStyles: showScores
+          ? { 0: { fontStyle: "bold" }, 4: { halign: "right", fontStyle: "bold" } }
+          : { 0: { fontStyle: "bold" } },
       });
       // @ts-expect-error autoTable adds lastAutoTable
       y = (doc.lastAutoTable?.finalY ?? y) + 22;
@@ -376,7 +392,7 @@ export function studentsToPdf(
       i + 1,
       s.full_name,
       s.student_code ?? s.exam_code ?? "",
-      s.dob ?? "",
+      formatStudentDob(s),
       s.gender ?? "",
       s.category ?? "",
       s.centre ?? "",

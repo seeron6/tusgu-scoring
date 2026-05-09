@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/sidebar";
 import { ProtectedPage } from "@/lib/auth-gate";
-import { formatDate } from "@/lib/utils";
+import { formatStudentDob } from "@/lib/utils";
 import {
   deleteTrophyType, listQuestionTypes, listScores, listStudents,
   listTrophyAllocations, listTrophyTypes, upsertTrophyAllocation, upsertTrophyType,
@@ -153,31 +153,72 @@ function AwardsInner() {
 
 function ExportAwardsButton({ rows }: { rows: LeaderboardRow[] }) {
   const [busy, setBusy] = React.useState(false);
-  async function run() {
+  const [open, setOpen] = React.useState(false);
+  const wrapRef = React.useRef<HTMLDivElement | null>(null);
+
+  // Click-away closes the menu so it doesn't trap focus.
+  React.useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+
+  async function run(withScores: boolean) {
     setBusy(true);
+    setOpen(false);
     try {
       const { awardsToPdf } = await import("@/lib/pdf");
-      const buf = awardsToPdf(rows, {});
+      const buf = awardsToPdf(rows, { withScores });
       const blob = new Blob([buf], { type: "application/pdf" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       const stamp = new Date().toISOString().slice(0, 10);
-      a.download = `tusgu-awards-${stamp}.pdf`;
+      a.download = `tusgu-awards-${withScores ? "with-scores-" : ""}${stamp}.pdf`;
       a.click();
       URL.revokeObjectURL(url);
-      toast.success("Awards PDF generated");
+      toast.success(`Awards PDF generated (${withScores ? "with scores" : "no scores"})`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Export failed");
     } finally {
       setBusy(false);
     }
   }
+
   return (
-    <Button variant="outline" onClick={run} disabled={busy}>
-      <FileText className="w-4 h-4" />
-      <span className="hidden sm:inline">{busy ? "Exporting…" : "Export PDF"}</span>
-    </Button>
+    <div ref={wrapRef} className="relative inline-block">
+      <Button variant="outline" onClick={() => setOpen((o) => !o)} disabled={busy}>
+        <FileText className="w-4 h-4" />
+        <span className="hidden sm:inline">{busy ? "Exporting…" : "Export PDF"}</span>
+        <Download className="w-3.5 h-3.5 -mr-1 opacity-60" />
+      </Button>
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 mt-1.5 z-30 w-64 bg-white border border-[#E8E3D7] rounded-lg shadow-lg overflow-hidden"
+        >
+          <button
+            role="menuitem"
+            onClick={() => run(false)}
+            className="w-full text-left px-3 py-2.5 hover:bg-[#F5F2EB] border-b border-[#F0EDE5] last:border-b-0"
+          >
+            <div className="text-[13px] font-semibold text-[#1F1E1B]">PDF — without scores</div>
+            <div className="text-[11px] text-[#7A7770]">Names only — share-friendly</div>
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => run(true)}
+            className="w-full text-left px-3 py-2.5 hover:bg-[#F5F2EB]"
+          >
+            <div className="text-[13px] font-semibold text-[#1F1E1B]">PDF — with scores</div>
+            <div className="text-[11px] text-[#7A7770]">Includes each winner&rsquo;s total score</div>
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -283,7 +324,7 @@ function TrophyBand({ trophy, rows }: { trophy: TrophyType; rows: LeaderboardRow
             <div className="min-w-0">
               <div className="text-[14px] text-[#1F1E1B] font-semibold truncate">{r.student.full_name}</div>
               <div className="text-[11px] text-[#7A7770] mt-0.5 truncate">
-                {[r.student.centre, r.student.teacher, r.student.dob ? `DOB ${formatDate(r.student.dob)}` : null]
+                {[r.student.centre, r.student.teacher, r.student.dob ? `DOB ${formatStudentDob(r.student)}` : null]
                   .filter(Boolean).join(" · ")}
               </div>
             </div>

@@ -1,8 +1,30 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import type { Student } from "./types";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+/**
+ * Returns true if the given input string is a 4-digit year (e.g. "2015").
+ * Used by the importer to flag students whose source data only had a year.
+ */
+export function isYearOnlyDobInput(input: unknown): boolean {
+  if (input == null) return false;
+  const s = String(input).trim();
+  return /^(19|20)\d{2}$/.test(s);
+}
+
+/**
+ * The DB column is `date`, so year-only DOBs are still stored as YYYY-01-01.
+ * The "this was originally year-only" hint lives on the student's `extra`
+ * JSONB column under `dob_year_only`, set by the importer / edit modal.
+ */
+export function isStudentDobYearOnly(student: Pick<Student, "extra"> | null | undefined): boolean {
+  if (!student) return false;
+  const extra = student.extra as Record<string, unknown> | undefined;
+  return extra?.dob_year_only === true;
 }
 
 /**
@@ -41,6 +63,22 @@ export function formatDate(dob: string | null | undefined): string {
   const d = new Date(dob);
   if (isNaN(d.getTime())) return dob;
   return d.toLocaleDateString("en-GB", { year: "numeric", month: "short", day: "numeric" });
+}
+
+/**
+ * Format a student's DOB for display. Year-only entries (flagged via
+ * `extra.dob_year_only`) render as "YOB 2015" so we don't pretend to know
+ * the actual day. Everyone else renders as a normal full date.
+ */
+export function formatStudentDob(
+  student: Pick<Student, "dob" | "extra"> | null | undefined
+): string {
+  if (!student?.dob) return "";
+  if (isStudentDobYearOnly(student)) {
+    const m = /^(\d{4})/.exec(student.dob);
+    return m ? `YOB ${m[1]}` : `YOB ${student.dob}`;
+  }
+  return formatDate(student.dob);
 }
 
 /**

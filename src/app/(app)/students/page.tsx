@@ -12,7 +12,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/sidebar";
 import { BarcodeScannerModal } from "@/components/barcode-scanner";
-import { calculateAge, formatDate } from "@/lib/utils";
+import { calculateAge, formatStudentDob, isStudentDobYearOnly } from "@/lib/utils";
 import { SUPABASE_CONFIGURED } from "@/lib/supabase";
 import { useAuth, PasswordModal } from "@/lib/auth-gate";
 import {
@@ -30,7 +30,7 @@ const TABLE_COLUMNS: { key: keyof Student; label: string; render?: (s: Student) 
   { key: "student_code", label: "Student Code" },
   { key: "exam_code", label: "Exam Code" },
   { key: "full_name", label: "Name", render: (s) => <span className="font-medium">{s.full_name}</span> },
-  { key: "dob", label: "DOB", render: (s) => <span className="text-[#7A7770]">{formatDate(s.dob)}</span> },
+  { key: "dob", label: "DOB", render: (s) => <span className="text-[#7A7770]">{formatStudentDob(s)}</span> },
   { key: "gender", label: "Gender" },
   { key: "category", label: "Category", render: (s) => s.category ? <CategoryChip value={s.category} /> : null },
   { key: "level", label: "Level" },
@@ -448,6 +448,8 @@ function StudentModal({
 }) {
   const [fullName, setFullName] = React.useState("");
   const [dob, setDob] = React.useState("");
+  const [yearOnly, setYearOnly] = React.useState(false);
+  const [yearValue, setYearValue] = React.useState("");
   const [gender, setGender] = React.useState("");
   const [category, setCategory] = React.useState("");
   const [centre, setCentre] = React.useState("");
@@ -465,6 +467,10 @@ function StudentModal({
   React.useEffect(() => {
     setFullName(editing?.full_name ?? "");
     setDob(editing?.dob ?? "");
+    const editingYearOnly = isStudentDobYearOnly(editing);
+    setYearOnly(editingYearOnly);
+    const yearMatch = editing?.dob ? /^(\d{4})/.exec(editing.dob) : null;
+    setYearValue(editingYearOnly && yearMatch ? yearMatch[1] : "");
     setGender(editing?.gender ?? "");
     setCategory(editing?.category ?? "");
     setCentre(editing?.centre ?? "");
@@ -479,13 +485,46 @@ function StudentModal({
     setFranchiseeCategory(editing?.franchisee_category ?? "");
   }, [editing, open]);
 
+  function toggleYearOnly(checked: boolean) {
+    setYearOnly(checked);
+    if (checked) {
+      const m = dob ? /^(\d{4})/.exec(dob) : null;
+      setYearValue(m ? m[1] : "");
+    } else {
+      // Year-only -> blank the year so the user picks a real date.
+      setYearValue("");
+      setDob("");
+    }
+  }
+
   async function submit() {
     if (!fullName.trim()) return toast.error("Name is required");
+
+    let dobValue: string | null;
+    let extraPatch: Record<string, unknown> | undefined;
+    if (yearOnly) {
+      const y = yearValue.trim();
+      if (y && !/^\d{4}$/.test(y)) return toast.error("Year of birth must be a 4-digit year");
+      dobValue = y ? `${y}-01-01` : null;
+      const baseExtra = (editing?.extra ?? {}) as Record<string, unknown>;
+      extraPatch = y ? { ...baseExtra, dob_year_only: true } : (() => {
+        const { dob_year_only: _drop, ...rest } = baseExtra;
+        return rest;
+      })();
+    } else {
+      dobValue = dob || null;
+      // Strip any prior year-only flag if it was set previously.
+      if (editing && isStudentDobYearOnly(editing)) {
+        const { dob_year_only: _drop, ...rest } = (editing.extra ?? {}) as Record<string, unknown>;
+        extraPatch = rest;
+      }
+    }
+
     setBusy(true);
     try {
       await onSave({
         full_name: fullName.trim(),
-        dob: dob || null,
+        dob: dobValue,
         gender: gender.trim() || null,
         category: category.trim() || null,
         centre: centre.trim() || null,
@@ -498,6 +537,7 @@ function StudentModal({
         flash_category: flashCategory.trim() || null,
         ci_category: ciCategory.trim() || null,
         franchisee_category: franchiseeCategory.trim() || null,
+        ...(extraPatch !== undefined ? { extra: extraPatch } : {}),
       });
     } finally {
       setBusy(false);
@@ -536,8 +576,31 @@ function StudentModal({
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
-            <Label>Date of Birth</Label>
-            <Input type="date" value={dob} onChange={(e) => setDob(e.target.value)} />
+            <div className="flex items-center justify-between mb-1.5">
+              <Label className="mb-0">{yearOnly ? "Year of Birth" : "Date of Birth"}</Label>
+              <label className="flex items-center gap-1.5 text-[11px] text-[#7A7770] cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={yearOnly}
+                  onChange={(e) => toggleYearOnly(e.target.checked)}
+                  className="accent-[#1B3A6B]"
+                />
+                Year only
+              </label>
+            </div>
+            {yearOnly ? (
+              <Input
+                type="number"
+                min={1900}
+                max={2100}
+                step={1}
+                placeholder="e.g. 2015"
+                value={yearValue}
+                onChange={(e) => setYearValue(e.target.value.replace(/[^0-9]/g, "").slice(0, 4))}
+              />
+            ) : (
+              <Input type="date" value={dob} onChange={(e) => setDob(e.target.value)} />
+            )}
           </div>
           <div>
             <Label>Gender</Label>
@@ -640,7 +703,7 @@ function StudentDetailModal({
           <DetailField label="Student Code" value={student.student_code} />
           <DetailField label="Exam Code (barcode)" value={student.exam_code} mono />
           <DetailField label="Barcode" value={student.barcode} mono />
-          <DetailField label="Date of Birth" value={formatDate(student.dob) || student.dob} />
+          <DetailField label="Date of Birth" value={formatStudentDob(student) || student.dob} />
           <DetailField label="Age" value={calculateAge(student.dob) ?? null} />
           <DetailField label="Gender" value={student.gender} />
         </DetailGroup>

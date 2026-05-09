@@ -13,7 +13,7 @@ import { TableSkeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/sidebar";
 import { BarcodeScannerModal } from "@/components/barcode-scanner";
 import { ProtectedPage } from "@/lib/auth-gate";
-import { maxQuestionsFor } from "@/lib/utils";
+import { maxQuestionsFor, isYearOnlyDobInput } from "@/lib/utils";
 import {
   findStudentByCode, getStudentScores, listQuestionTypes, listScores,
   listStudents, listTrophyAllocations, listTrophyTypes, saveStudentScores,
@@ -776,12 +776,13 @@ function ScoreImportModal({
             stillInvalid.push({ row: inv.row, reason: "No name to create from" });
             continue;
           }
+          const dobRawCell = mapping.student.dob ? raw[mapping.student.dob] : "";
           const insert: StudentInsert = {
             student_code: get(mapping.student.student_code) || null,
             exam_code: get(mapping.student.exam_code) || get(mapping.code) || null,
             barcode: null,
             full_name: fullName,
-            dob: normalizeDob(mapping.student.dob ? raw[mapping.student.dob] : ""),
+            dob: normalizeDob(dobRawCell),
             gender: get(mapping.student.gender) || null,
             category: get(mapping.student.category) || null,
             level: null,
@@ -804,7 +805,7 @@ function ScoreImportModal({
             comp_time: null,
             deduction: null,
             notes: null,
-            extra: {},
+            extra: isYearOnlyDobInput(dobRawCell) ? { dob_year_only: true } : {},
           };
           newStudentRows.push({ invIdx: i, insert, rawRow: raw });
         }

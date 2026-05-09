@@ -9,7 +9,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { TableSkeleton } from "@/components/ui/skeleton";
 import { PageHeader } from "@/components/sidebar";
 import { ProtectedPage } from "@/lib/auth-gate";
-import { formatDate } from "@/lib/utils";
+import { formatStudentDob } from "@/lib/utils";
 import {
   listQuestionTypes, listScores, listStudents, listTrophyAllocations, listTrophyTypes,
 } from "@/lib/data";
@@ -420,7 +420,7 @@ function CategorySection({
                   </td>
                 )}
                 {isVisible("dob") && (
-                  <td className="text-[#7A7770]">{formatDate(r.student.dob)}</td>
+                  <td className="text-[#7A7770]">{formatStudentDob(r.student)}</td>
                 )}
                 {isVisible("age") && <td className="text-[#4A4843]">{r.age ?? ""}</td>}
                 {isVisible("centre") && (

@@ -1,6 +1,7 @@
 import * as XLSX from "xlsx";
 import type { LeaderboardRow, QuestionType, Student, StudentInsert } from "./types";
 import { STUDENT_FIELDS, type StudentField, type ImportMode } from "./excel-types";
+import { formatStudentDob, isYearOnlyDobInput } from "./utils";
 
 export { STUDENT_FIELDS, type StudentField, type ImportMode };
 
@@ -408,6 +409,7 @@ export function previewStudentImport(
 
     const dobRaw = mapping.dob ? raw[mapping.dob] : "";
     const dob = normalizeDob(dobRaw);
+    const dobYearOnly = isYearOnlyDobInput(dobRaw);
 
     // Anything in the row that wasn't mapped goes into `extra` so the data
     // isn't lost. The original column name is preserved as the key.
@@ -421,6 +423,7 @@ export function previewStudentImport(
       if (trimmed === "" || trimmed == null) continue;
       extra[k] = trimmed;
     }
+    if (dobYearOnly) extra.dob_year_only = true;
 
     const data: StudentInsert = {
       student_code: get(mapping.student_code) || null,
@@ -569,7 +572,7 @@ export function leaderboardToWorkbook(
       Name: r.student.full_name,
       "Student Code": r.student.student_code ?? "",
       "Exam Code": r.student.exam_code ?? "",
-      DOB: r.student.dob ?? "",
+      DOB: formatStudentDob(r.student),
       Age: r.age ?? "",
       Category: r.student.category ?? "",
       Centre: r.student.centre ?? "",
@@ -600,7 +603,7 @@ export function studentsToWorkbook(students: Student[]): ArrayBuffer {
       "Student Code": s.student_code ?? "",
       "Exam Code": s.exam_code ?? "",
       "Full Name": s.full_name,
-      "Date of Birth": s.dob ?? "",
+      "Date of Birth": formatStudentDob(s),
       Gender: s.gender ?? "",
       Category: s.category ?? "",
       Level: s.level ?? "",
@@ -632,7 +635,7 @@ export function fullRosterToWorkbook(
       "Exam Code": s.exam_code ?? "",
       Barcode: s.barcode ?? "",
       "Full Name": s.full_name,
-      "Date of Birth": s.dob ?? "",
+      "Date of Birth": formatStudentDob(s),
       Gender: s.gender ?? "",
       Category: s.category ?? "",
       Level: s.level ?? "",
@@ -687,7 +690,7 @@ export function awardsToWorkbook(rows: LeaderboardRow[]): ArrayBuffer {
     Trophy: r.trophy?.name ?? "",
     Centre: r.student.centre ?? "",
     Teacher: r.student.teacher ?? "",
-    DOB: r.student.dob ?? "",
+    DOB: formatStudentDob(r.student),
   }));
 
   const ws = XLSX.utils.json_to_sheet(data);
@@ -769,7 +772,7 @@ export function leaderboardToCsv(
       r.student.full_name,
       r.student.student_code ?? "",
       r.student.exam_code ?? "",
-      r.student.dob ?? "",
+      formatStudentDob(r.student),
       r.age ?? "",
       r.student.category ?? "",
       r.student.centre ?? "",
